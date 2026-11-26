@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { assets, certificates, credentials, documents, folders } from "@/db/schema";
+import { assets, certificates, credentials, documents, folders, otps } from "@/db/schema";
 import { isUuid } from "./access";
 import type { Kind } from "./entities";
 
@@ -10,7 +10,7 @@ export type FolderOption = { id: string; label: string };
 export type TreeEntry = { kind: Kind; id: string; name: string; folderId: string | null; icon: string };
 export type OrgTree = { folders: { id: string; parentId: string | null; name: string; icon: string }[]; entries: TreeEntry[] };
 
-const ENTRY_TABLES = { assets, credentials, certificates, documents } as const;
+const ENTRY_TABLES = { assets, credentials, certificates, documents, otp: otps } as const;
 
 export async function listFolders(orgId: string): Promise<Folder[]> {
   return db.select().from(folders).where(eq(folders.orgId, orgId)).orderBy(asc(folders.name));
@@ -64,12 +64,13 @@ export async function resolveFolder(orgId: string, raw: unknown): Promise<string
 }
 
 export async function loadTree(orgId: string): Promise<OrgTree> {
-  const [f, a, c, s, d] = await Promise.all([
+  const [f, a, c, s, d, o] = await Promise.all([
     db.select({ id: folders.id, parentId: folders.parentId, name: folders.name, icon: folders.icon }).from(folders).where(eq(folders.orgId, orgId)),
     db.select({ id: assets.id, name: assets.name, folderId: assets.folderId, icon: assets.type }).from(assets).where(eq(assets.orgId, orgId)),
     db.select({ id: credentials.id, name: credentials.name, folderId: credentials.folderId }).from(credentials).where(eq(credentials.orgId, orgId)),
     db.select({ id: certificates.id, name: certificates.name, folderId: certificates.folderId }).from(certificates).where(eq(certificates.orgId, orgId)),
     db.select({ id: documents.id, name: documents.name, folderId: documents.folderId }).from(documents).where(eq(documents.orgId, orgId)),
+    db.select({ id: otps.id, name: otps.name, folderId: otps.folderId }).from(otps).where(eq(otps.orgId, orgId)),
   ]);
   return {
     folders: f,
@@ -78,6 +79,7 @@ export async function loadTree(orgId: string): Promise<OrgTree> {
       ...c.map((r) => ({ ...r, kind: "credentials" as const, icon: "credential" })),
       ...s.map((r) => ({ ...r, kind: "certificates" as const, icon: "certificate" })),
       ...d.map((r) => ({ ...r, kind: "documents" as const, icon: "document" })),
+      ...o.map((r) => ({ ...r, kind: "otp" as const, icon: "otp" })),
     ],
   };
 }
@@ -85,13 +87,14 @@ export async function loadTree(orgId: string): Promise<OrgTree> {
 // Entries that sit directly in a folder (or at the root when folderId is null).
 export async function entriesIn(orgId: string, folderId: string | null) {
   const where = <T extends (typeof ENTRY_TABLES)[Kind]>(t: T) => and(eq(t.orgId, orgId), folderId ? eq(t.folderId, folderId) : isNull(t.folderId));
-  const [a, c, s, d] = await Promise.all([
+  const [a, c, s, d, o] = await Promise.all([
     db.select().from(assets).where(where(assets)).orderBy(asc(assets.name)),
     db.select().from(credentials).where(where(credentials)).orderBy(asc(credentials.name)),
     db.select().from(certificates).where(where(certificates)).orderBy(asc(certificates.name)),
     db.select().from(documents).where(where(documents)).orderBy(asc(documents.name)),
+    db.select().from(otps).where(where(otps)).orderBy(asc(otps.name)),
   ]);
-  return { assets: a, credentials: c, certificates: s, documents: d };
+  return { assets: a, credentials: c, certificates: s, documents: d, otp: o };
 }
 
 // Deleting a folder never deletes what is in it: sub-folders and entries move up one level.

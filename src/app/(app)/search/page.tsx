@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { and, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { assets, certificates, credentials, documents } from "@/db/schema";
+import { assets, certificates, credentials, documents, otps } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { accessibleOrgs } from "@/lib/access";
 import { ENTITIES, type Kind } from "@/lib/entities";
@@ -20,7 +20,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   if (q.length >= 2 && ids.length) {
     const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
     const any = (...cols: Parameters<typeof ilike>[0][]) => or(...cols.map((c) => ilike(c, like))) as SQL;
-    const [a, c, s, d] = await Promise.all([
+    const [a, c, s, d, o] = await Promise.all([
       db.select({ id: assets.id, orgId: assets.orgId, name: assets.name, extra: assets.hostname }).from(assets)
         .where(and(inArray(assets.orgId, ids), any(assets.name, assets.hostname, assets.ipAddress, assets.serialNumber, assets.os, assets.notes))).limit(50),
       db.select({ id: credentials.id, orgId: credentials.orgId, name: credentials.name, extra: credentials.username }).from(credentials)
@@ -29,9 +29,11 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         .where(and(inArray(certificates.orgId, ids), any(certificates.name, certificates.host, certificates.subject, certificates.sans, certificates.issuer))).limit(50),
       db.select({ id: documents.id, orgId: documents.orgId, name: documents.name, extra: sql<string | null>`null` }).from(documents)
         .where(and(inArray(documents.orgId, ids), any(documents.name, documents.content))).limit(50),
+      db.select({ id: otps.id, orgId: otps.orgId, name: otps.name, extra: otps.account }).from(otps)
+        .where(and(inArray(otps.orgId, ids), any(otps.name, otps.issuer, otps.account, otps.notes))).limit(50),
     ]);
     const tag = (rows: Omit<Hit, "kind">[], kind: Kind) => rows.map((r) => ({ ...r, kind }));
-    hits = [...tag(a, "assets"), ...tag(c, "credentials"), ...tag(s, "certificates"), ...tag(d, "documents")];
+    hits = [...tag(a, "assets"), ...tag(c, "credentials"), ...tag(s, "certificates"), ...tag(d, "documents"), ...tag(o, "otp")];
   }
   const matchedOrgs = q.length >= 2 ? orgs.filter((o) => o.name.toLowerCase().includes(q.toLowerCase())) : [];
   return (

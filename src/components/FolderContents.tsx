@@ -28,6 +28,7 @@ function detail(kind: Kind, row: Record<string, unknown>) {
   if (kind === "assets") return <span className="mono">{String(row.hostname || row.ipAddress || "")}</span>;
   if (kind === "credentials") return <span className="mono">{String(row.username ?? "")}</span>;
   if (kind === "certificates") return <span className="mono">{String(row.host ?? "")}</span>;
+  if (kind === "otp") return <span>{[row.issuer, row.account].filter(Boolean).join(" · ")}</span>;
   return null;
 }
 

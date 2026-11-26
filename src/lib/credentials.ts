@@ -62,6 +62,8 @@ export async function findInPersonalVault(user: Pick<User, "id" | "name">, name:
 
 export async function resolveCredential(user: Pick<User, "id" | "name">, kind: Kind, entry: Entry): Promise<Resolution> {
   if (kind === "credentials") return { credential: entry as unknown as Credential, source: "direct" };
+  // An OTP entry is its own authenticator: its account stands in for a username.
+  if (kind === "otp") return { credential: { ...(entry as unknown as Credential), username: (entry.account as string | null) ?? null, password: null }, source: "direct" };
   if (kind !== "assets") return { credential: null, source: "none" };
   const mode = String(entry.credentialSource ?? "none");
   if (mode === "linked") {

@@ -1,6 +1,6 @@
 import "server-only";
 import { notFound } from "next/navigation";
-import { and, eq, asc, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, asc, gt, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, orgAccess, organizations } from "@/db/schema";
 import { clientIp, requireUser, type User } from "./auth";
@@ -49,7 +49,15 @@ export const isPersonal = (org: Pick<Org, "ownerId">) => Boolean(org.ownerId);
 
 export async function audit(user: Pick<User, "id" | "email"> | null, action: string, opts: {
   orgId?: string | null; entityType?: string; entityId?: string; detail?: string; actor?: string;
+  // Skip the entry if the same person did the same thing to the same item within this many minutes.
+  dedupeMinutes?: number;
 } = {}) {
+  if (opts.dedupeMinutes && user && opts.entityId) {
+    const since = new Date(Date.now() - opts.dedupeMinutes * 60_000);
+    const [recent] = await db.select({ id: auditLog.id }).from(auditLog).where(and(
+      eq(auditLog.userId, user.id), eq(auditLog.action, action), eq(auditLog.entityId, opts.entityId), gt(auditLog.createdAt, since))).limit(1);
+    if (recent) return;
+  }
   await db.insert(auditLog).values({
     userId: user?.id ?? null,
     actor: user?.email ?? opts.actor ?? null,

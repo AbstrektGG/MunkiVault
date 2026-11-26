@@ -10,7 +10,7 @@ import {
   passwordProblem, recordLoginFailure, requireAdmin, requireUser,
 } from "@/lib/auth";
 import { audit, isUuid, requireOrg } from "@/lib/access";
-import { decryptSecret, hashPassword, totp, verifyPassword } from "@/lib/crypto";
+import { decryptSecret, hashPassword, otpCode, verifyPassword, type OtpAlgorithm } from "@/lib/crypto";
 import { ENTITIES, LEVELS, isKind, type Kind, type Level } from "@/lib/entities";
 import { createEntry, deleteEntry, getEntry, parseForm, restoreRevision, updateEntry } from "@/lib/store";
 import { fetchCertificate, type FetchedCert } from "@/lib/certs";
@@ -276,7 +276,9 @@ export async function entryInfoAction(orgId: string, kindRaw: string, id: string
   }
 }
 
-export async function revealForEntryAction(orgId: string, kindRaw: string, id: string, field: "password" | "totp", purpose: "view" | "copy" = "view"): Promise<{ value?: string; remaining?: number; error?: string }> {
+export type RevealResult = { value?: string; next?: string; remaining?: number; period?: number; digits?: number; error?: string };
+
+export async function revealForEntryAction(orgId: string, kindRaw: string, id: string, field: "password" | "totp", purpose: "view" | "copy" = "view"): Promise<RevealResult> {
   try {
     const kind = kindOrThrow(kindRaw);
     const { user, level } = await requireOrg(orgId);
@@ -290,12 +292,19 @@ export async function revealForEntryAction(orgId: string, kindRaw: string, id: s
     const stored = field === "password" ? r.credential.password : r.credential.totp;
     if (!stored) return { error: field === "password" ? "No password is stored." : "No one-time code is set up." };
     const plain = decryptSecret(stored);
-    const verb = field === "totp" ? "totp_generated" : purpose === "copy" ? "copied" : "revealed";
     const device = kind === "assets" ? `${entry.name}: ` : "";
     const via = r.source === "user" ? " (from their personal vault)" : "";
+    const detail = `${device}${r.credential.name}${via}`;
     // Logged against the organization being worked on, so its activity shows who used which credential on which device.
-    await audit(user, `credentials.${verb}`, { orgId, entityType: kind, entityId: id, detail: `${device}${r.credential.name}${via}` });
-    if (field === "totp") { const { code, remaining } = totp(plain); return { value: code, remaining }; }
+    if (field === "totp") {
+      const settings = kind === "otp" ? { algorithm: entry.algorithm as OtpAlgorithm, digits: Number(entry.digits), period: Number(entry.period) } : undefined;
+      const code = otpCode(plain, Date.now(), settings);
+      // A live authenticator refreshes every period; one log entry per five minutes per person is enough.
+      await audit(user, purpose === "copy" ? "credentials.totp_copied" : "credentials.totp_generated",
+        { orgId, entityType: kind, entityId: id, detail, dedupeMinutes: purpose === "copy" ? 0 : 5 });
+      return { value: code.code, next: code.next, remaining: code.remaining, period: code.period, digits: code.digits };
+    }
+    await audit(user, `credentials.${purpose === "copy" ? "copied" : "revealed"}`, { orgId, entityType: kind, entityId: id, detail });
     return { value: plain };
   } catch (err) {
     if (isRedirect(err)) throw err;

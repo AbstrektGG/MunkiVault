@@ -11,6 +11,7 @@ import { fmtDateTime } from "@/lib/format";
 import { getEntry, linkedEntries } from "@/lib/store";
 import { devicesUsing, linkedCredentials } from "@/lib/credentials";
 import { EntryActions } from "@/components/EntryActions";
+import { LiveOtp } from "@/components/LiveOtp";
 import { Markdown } from "@/components/Markdown";
 import { SecretReveal } from "@/components/SecretReveal";
 import { RecheckCert } from "@/components/RecheckCert";
@@ -40,11 +41,12 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
     ? await Promise.all([linkedCredentials(id), linkedEntries("certificates", orgId, id)])
     : [[], []];
   const usedBy = kind === "credentials" ? await devicesUsing(id) : [];
-  const info = kind === "assets" || kind === "credentials" ? await entryInfoAction(orgId, kind, id) : null;
+  const info = kind === "assets" || kind === "credentials" || kind === "otp" ? await entryInfoAction(orgId, kind, id) : null;
   const source = String(entry.credentialSource ?? "none");
 
   function value(f: FieldDef) {
     const v = entry![f.name] as string | number | null;
+    if (f.kind === "secret" && f.name === "totp") return v ? <LiveOtp target={{ orgId, kind, id, name: entry!.name }} canReveal={canEdit} large={kind === "otp"} /> : null;
     if (f.kind === "secret") return v ? <SecretReveal orgId={orgId} id={id} field={f.name as "password" | "totp"} canReveal={canEdit} /> : null;
     if (v === null || v === "") return null;
     if (f.kind === "markdown") return <Markdown source={String(v)} />;
@@ -85,7 +87,7 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
         <section className="card card-body">
           <dl className="fields">
             {body.map(({ f, node }) => (
-              <div key={f.name} className={f.wide ? "wide" : undefined}><dt>{f.label}</dt><dd>{node}</dd></div>
+              <div key={f.name} className={f.wide || (kind === "otp" && f.name === "totp") ? "wide" : undefined}><dt>{f.name === "totp" ? "Current code" : f.label}</dt><dd>{node}</dd></div>
             ))}
           </dl>
         </section>

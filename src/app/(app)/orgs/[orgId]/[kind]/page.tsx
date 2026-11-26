@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Plus } from "lucide-react";
 import { can, requireOrg } from "@/lib/access";
-import { ENTITIES, isKind, optionLabel } from "@/lib/entities";
+import { ENTITIES, isKind, optionLabel, lowerLabel } from "@/lib/entities";
 import { listEntries } from "@/lib/store";
 import { listFolders, pathTo } from "@/lib/folders";
 import { Empty, ExpiryBadge, fmtDate } from "@/components/server";
@@ -21,7 +21,7 @@ export default async function EntryList({ params }: { params: Promise<{ orgId: s
     <section className="card">
       <div className="card-head">
         <h2>{def.plural}</h2>
-        {can(level, "editor") ? <Link href={`/orgs/${orgId}/${kind}/new`} className="btn btn-primary btn-sm"><Plus size={14} />New {def.singular.toLowerCase()}</Link> : null}
+        {can(level, "editor") ? <Link href={`/orgs/${orgId}/${kind}/new`} className="btn btn-primary btn-sm"><Plus size={14} />New {lowerLabel(def.singular)}</Link> : null}
       </div>
       {rows.length ? (
         <div className="table-wrap"><table>

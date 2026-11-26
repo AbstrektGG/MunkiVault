@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireOrg } from "@/lib/access";
-import { ENTITIES, isKind } from "@/lib/entities";
+import { ENTITIES, isKind, lowerLabel } from "@/lib/entities";
 import { listEntries } from "@/lib/store";
 import { folderOptions, listFolders } from "@/lib/folders";
 import { EntryForm } from "@/components/EntryForm";
@@ -18,7 +18,7 @@ export default async function NewEntry({ params, searchParams }: { params: Promi
   const folderId = allFolders.some((f) => f.id === folder) ? folder! : null;
   return (
     <div className="stack">
-      <h2>New {ENTITIES[kind].singular.toLowerCase()}</h2>
+      <h2>New {lowerLabel(ENTITIES[kind].singular)}</h2>
       {linkDevice ? <p className="muted">It will be linked to {linkDevice.name} when you save.</p> : null}
       <EntryForm kind={kind} orgId={orgId} id={null} version={0} stored={[]} assets={assets}
         values={{ assetId: assets.some((a) => a.id === preset) ? preset! : null, name: name ? String(name).slice(0, 200) : null }}

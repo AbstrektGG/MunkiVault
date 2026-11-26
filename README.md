@@ -18,7 +18,8 @@ single sign-on.
 | Systems | Servers, network gear, cloud services and more, with hostname, IP, OS, serial, warranty and Markdown notes |
 | Remote connections | One click connect: downloads a `.rdp` file, or opens `ssh://`, `https://`, `vnc://` links |
 | Credentials | Passwords and TOTP seeds encrypted with AES-256-GCM. Hidden until revealed, auto-hide after 30 seconds, every reveal audited |
-| One-time codes | Store a TOTP seed and generate the 6 digit codes in the app |
+| OTP authenticators | A dedicated OTP entry type that works as an MFA authenticator app: live codes with a countdown that roll over by themselves, and the next code shown near expiry. Set up by scanning the service's QR code (upload an image, paste a screenshot, drop a file, or capture the screen), or by typing the setup key and settings manually. Supports SHA-1, SHA-256 and SHA-512, 6 to 8 digits, and any period from 10 to 300 seconds. Credentials can carry a one-time code too |
+| Authenticator page | Every code in a vault in one list, like a phone authenticator app, with a filter and click-to-copy |
 | Certificates | Fetch a live certificate from any host and port, track expiry, re-check on demand |
 | Expirations | Certificates, passwords and warranties that are expired or due, across all organizations |
 | Documents | Markdown editor with toolbar, split preview and sanitised rendering |
@@ -116,8 +117,16 @@ Keep one local administrator as a break-glass account.
   reveal another user's vault. Administrators can still see in the audit log that someone used
   their personal credential on a device (never the secret itself).
 - **Markdown**: sanitised with DOMPurify before rendering.
+- **One-time codes**: OTP setup keys are encrypted like passwords and never sent to the browser.
+  Codes are generated on the server; QR codes are decoded in the browser and the result goes into
+  the form like typed input. Viewing codes is logged once per five minutes per person and item (a
+  live code refreshes every period); every copy is logged. Live codes stop refreshing after ten
+  minutes or when the tab is hidden. Keeping the MFA codes for an account in the same vault as its
+  password means one compromised vault account gives both factors, so restrict access to those
+  vaults accordingly.
 
-Known limits of this first version: sign-in throttling is held in memory (per process), there is no
+Known limits: counter-based (HOTP) codes and Google Authenticator export QR codes are not supported
+(scan each service's own QR code instead). Other limits: sign-in throttling is held in memory (per process), there is no
 second factor for local accounts (use SSO with MFA at the identity provider), certificate checks run
 on demand rather than on a schedule, and there are no expiry notifications yet.
 

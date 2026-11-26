@@ -1,7 +1,7 @@
 // Field definitions for the four vault entry types. Shared by forms, detail views, history and the store.
 // This file must stay free of server-only imports because client components read it.
 
-export type Kind = "assets" | "credentials" | "certificates" | "documents";
+export type Kind = "assets" | "credentials" | "certificates" | "documents" | "otp";
 
 export type FieldKind = "text" | "textarea" | "markdown" | "select" | "secret" | "date" | "number" | "asset";
 
@@ -47,6 +47,10 @@ export const DEFAULT_PORTS: Record<string, number> = { rdp: 3389, ssh: 22, https
 
 const name: FieldDef = { name: "name", label: "Name", kind: "text", required: true, wide: true };
 const assetRef: FieldDef = { name: "assetId", label: "Linked system", kind: "asset", help: "Optional. Shows this entry on the system's page." };
+
+export const OTP_ALGORITHM_OPTIONS = [["SHA1", "SHA-1 (most services)"], ["SHA256", "SHA-256"], ["SHA512", "SHA-512"]] as const;
+export const OTP_DIGIT_OPTIONS = [["6", "6 digits"], ["7", "7 digits"], ["8", "8 digits"]] as const;
+export const OTP_PERIOD_OPTIONS = [["30", "30 seconds"], ["60", "60 seconds"], ["15", "15 seconds"], ["90", "90 seconds"]] as const;
 
 export const ENTITIES: Record<Kind, EntityDef> = {
   assets: {
@@ -102,6 +106,21 @@ export const ENTITIES: Record<Kind, EntityDef> = {
       { name: "notes", label: "Notes", kind: "markdown", wide: true },
     ],
   },
+  otp: {
+    kind: "otp", singular: "OTP", plural: "OTPs",
+    columns: ["issuer", "account"],
+    fields: [
+      name,
+      { name: "issuer", label: "Issuer / service", kind: "text", placeholder: "Microsoft" },
+      { name: "account", label: "Account", kind: "text", mono: true, placeholder: "admin@contoso.onmicrosoft.com" },
+      { name: "totp", label: "Setup key", kind: "secret", required: true, help: "The secret key shown under \"Can't scan the QR code?\", or an otpauth:// link. Spaces and lower case are fine." },
+      { name: "algorithm", label: "Algorithm", kind: "select", options: OTP_ALGORITHM_OPTIONS, required: true },
+      { name: "digits", label: "Code length", kind: "select", options: OTP_DIGIT_OPTIONS, required: true },
+      { name: "period", label: "New code every", kind: "select", options: OTP_PERIOD_OPTIONS, required: true },
+      { name: "url", label: "Sign-in URL", kind: "text", mono: true, placeholder: "https://" },
+      { name: "notes", label: "Notes", kind: "markdown", wide: true },
+    ],
+  },
   documents: {
     kind: "documents", singular: "Document", plural: "Documents",
     columns: [],
@@ -116,7 +135,7 @@ export const KINDS = Object.keys(ENTITIES) as Kind[];
 export const isKind = (value: string): value is Kind => (KINDS as string[]).includes(value);
 
 export function optionLabel(field: FieldDef, value: unknown): string {
-  return field.options?.find(([v]) => v === value)?.[1] ?? String(value ?? "");
+  return field.options?.find(([v]) => v === String(value))?.[1] ?? String(value ?? "");
 }
 
 export const LEVELS = ["viewer", "editor", "manager"] as const;
@@ -135,3 +154,6 @@ export const FOLDER_ICONS = [
   ["vpn", "VPN"], ["cloud", "Cloud"], ["passwords", "Passwords and logins"], ["documents", "Documents"],
 ] as const;
 export type FolderIcon = (typeof FOLDER_ICONS)[number][0];
+
+// "System" -> "system" in running text, but acronyms such as "OTP" stay as they are.
+export const lowerLabel = (label: string) => (label === label.toUpperCase() ? label : label.toLowerCase());

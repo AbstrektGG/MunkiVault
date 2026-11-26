@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import {
   Building2, CalendarClock, KeyRound, LayoutDashboard, LockKeyhole, LogOut, PanelLeftClose, PanelLeftOpen, ScrollText,
-  Settings, UserCog, Users, Vault,
+  Settings, Timer, UserCog, Users, Vault,
 } from "lucide-react";
 import { logoutAction } from "@/app/actions";
 
@@ -39,6 +39,7 @@ export function AppNav({ user, vaultId, initialCollapsed }: { user: { name: stri
         <Item href="/" exact icon={<LayoutDashboard size={16} />} label="Dashboard" collapsed={collapsed} />
         <Item href={`/orgs/${vaultId}`} icon={<LockKeyhole size={16} />} label="My vault" collapsed={collapsed} />
         <Item href="/orgs" exact icon={<Building2 size={16} />} label="Organizations" collapsed={collapsed} />
+        <Item href="/authenticator" icon={<Timer size={16} />} label="Authenticator" collapsed={collapsed} />
         <Item href="/expirations" icon={<CalendarClock size={16} />} label="Expirations" collapsed={collapsed} />
         <Item href="/generator" icon={<KeyRound size={16} />} label="Password generator" collapsed={collapsed} />
       </nav>

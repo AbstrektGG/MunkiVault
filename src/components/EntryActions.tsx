@@ -7,6 +7,15 @@ import { copyPlain, copySecret, viewSecret, type Target } from "./commands";
 // Quick actions in an item's header; the same commands as the tree's right-click menu.
 export function EntryActions({ target, info }: { target: Target; info: EntryInfo }) {
   const noReveal = info.canReveal ? undefined : "Editor access is required to reveal secrets";
+  if (target.kind === "otp") {
+    return (
+      <div className="quick-actions">
+        <button type="button" className="btn btn-sm" disabled={!info.canReveal} title={noReveal} onClick={() => copySecret(target, "totp")}><KeyRound size={14} />Copy OTP</button>
+        <button type="button" className="btn btn-sm" disabled={!info.canReveal} title={noReveal} onClick={() => viewSecret(target, "totp")}><Timer size={14} />View OTP</button>
+        {info.username ? <button type="button" className="btn btn-sm" onClick={() => copyPlain(info.username!, "Account")}><User size={14} />Copy account</button> : null}
+      </div>
+    );
+  }
   return (
     <div className="quick-actions">
       {info.connect ? (

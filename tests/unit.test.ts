@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 
 process.env.MUNKIVAULT_MASTER_KEY = randomBytes(32).toString("base64");
 
-import { decryptSecret, encryptSecret, hashPassword, parseTotpSeed, totp, verifyPassword } from "../src/lib/crypto";
+import { base32Encode, canonicalOtp, decryptSecret, encryptSecret, hashPassword, otpCode, parseOtp, totp, verifyPassword } from "../src/lib/crypto";
 import { diffLines } from "../src/lib/diff";
 import { daysUntil, urgency } from "../src/lib/format";
 import { DEFAULT_OPTIONS, charsets, generatePassword } from "../src/lib/password";
@@ -42,8 +42,8 @@ test("TOTP matches the RFC 6238 SHA-1 vector", () => {
   const seed = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
   assert.equal(totp(seed, 59_000).code, "287082");
   assert.equal(totp(seed, 1111111109_000).code, "081804");
-  assert.equal(parseTotpSeed(`otpauth://totp/x?secret=${seed.toLowerCase()}&issuer=y`), seed);
-  assert.throws(() => parseTotpSeed("not base32!"));
+  assert.equal(canonicalOtp(`otpauth://totp/x?secret=${seed.toLowerCase()}&issuer=y`), seed);
+  assert.throws(() => canonicalOtp("not base32!"));
 });
 
 test("line diff reports additions and removals", () => {
@@ -71,4 +71,32 @@ test("expiry urgency thresholds", () => {
   assert.equal(urgency(14), "critical");
   assert.equal(urgency(45), "warning");
   assert.equal(urgency(46), "ok");
+});
+
+test("TOTP matches the RFC 6238 SHA-256 and SHA-512 vectors (8 digits)", () => {
+  const k256 = base32Encode(Buffer.from("12345678901234567890123456789012"));
+  const k512 = base32Encode(Buffer.from("1234567890123456789012345678901234567890123456789012345678901234"));
+  const vectors: [number, string, string][] = [[59, "46119246", "90693936"], [1111111109, "68084774", "25091201"], [20000000000, "77737706", "47863826"]];
+  for (const [t, c256, c512] of vectors) {
+    assert.equal(otpCode(k256, t * 1000, { algorithm: "SHA256", digits: 8 }).code, c256);
+    assert.equal(otpCode(k512, t * 1000, { algorithm: "SHA512", digits: 8 }).code, c512);
+  }
+  // Settings carried inside an otpauth link survive storage.
+  const stored = canonicalOtp(`otpauth://totp/Acme:me@acme.test?secret=${k256}&algorithm=SHA256&digits=8&period=30&issuer=Acme`);
+  assert.equal(otpCode(stored, 59_000).code, "46119246");
+});
+
+test("otpauth links are parsed and validated", () => {
+  const seed = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  const c = parseOtp(`otpauth://totp/Microsoft:alex%40contoso.com?secret=${seed}&issuer=Microsoft&period=60`);
+  assert.deepEqual([c.issuer, c.account, c.period, c.digits, c.algorithm], ["Microsoft", "alex@contoso.com", 60, 6, "SHA1"]);
+  assert.equal(parseOtp(`otpauth://totp/GitHub?secret=${seed}`).account, "GitHub");
+  assert.throws(() => parseOtp(`otpauth://hotp/x?secret=${seed}&counter=1`), /HOTP/);
+  assert.throws(() => parseOtp("otpauth-migration://offline?data=abc"), /Google Authenticator export/);
+  assert.throws(() => parseOtp(`otpauth://totp/x?secret=${seed}&digits=4`), /6 to 8/);
+  assert.throws(() => parseOtp("GEZDG"), /too short/);
+  const now = 1_700_000_000_000;
+  const a = otpCode(seed, now), b = otpCode(seed, now + 30_000);
+  assert.equal(a.next, b.code);
+  assert.ok(a.remaining >= 1 && a.remaining <= 30);
 });

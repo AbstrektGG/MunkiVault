@@ -4,8 +4,9 @@ import { Fragment, startTransition, useActionState, useRef, useState } from "rea
 import Link from "next/link";
 import { ArrowUp, Download, KeyRound, Wand2, X } from "lucide-react";
 import { fetchCertAction, saveEntryAction } from "@/app/actions";
-import { CREDENTIAL_SOURCES, ENTITIES, type FieldDef, type Kind } from "@/lib/entities";
+import { CREDENTIAL_SOURCES, ENTITIES, type FieldDef, type Kind, lowerLabel } from "@/lib/entities";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { OtpScan, type ScannedOtp } from "./OtpScan";
 import { PasswordGenerator } from "./PasswordGenerator";
 import { Message } from "./ui";
 
@@ -83,6 +84,21 @@ export function EntryForm({ kind, orgId, id, version, values, stored, assets, fo
 
   const input = (name: string) => formRef.current?.elements.namedItem(name) as HTMLInputElement | null;
 
+  // Fills the form from a scanned QR code; only empty text fields are overwritten.
+  function applyScan(r: ScannedOtp) {
+    const set = (name: string, value: string | undefined, onlyIfEmpty = true) => {
+      const el = input(name);
+      if (!el || !value || (onlyIfEmpty && el.value)) return;
+      if (el instanceof HTMLSelectElement && ![...el.options].some((o) => o.value === value)) el.add(new Option(value, value));
+      el.value = value;
+    };
+    set("totp", r.uri, false);
+    set("name", r.issuer && r.account ? `${r.issuer} (${r.account})` : r.issuer ?? r.account);
+    set("issuer", r.issuer); set("account", r.account);
+    set("algorithm", r.algorithm, false); set("digits", r.digits, false); set("period", r.period, false);
+    if (kind === "credentials") set("username", r.account);
+  }
+
   async function fetchCert() {
     const host = input("host")?.value.trim();
     if (!host) { setFetching("Enter a host first."); return; }
@@ -107,7 +123,12 @@ export function EntryForm({ kind, orgId, id, version, values, stored, assets, fo
       case "textarea":
         return <textarea {...common} rows={4} defaultValue={String(value)} />;
       case "select":
-        return <select {...common} defaultValue={String(value || f.options?.[0]?.[0])}>{f.options?.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>;
+      {
+        // Keep a stored value that is not one of the usual choices (for example a 45 second OTP period).
+        const current = String(value || f.options?.[0]?.[0]);
+        const opts = f.options?.some(([v]) => v === current) ? f.options : [...(f.options ?? []), [current, current] as const];
+        return <select {...common} defaultValue={current}>{opts?.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>;
+      }
       case "asset":
         return (
           <select {...common} defaultValue={String(value)}>
@@ -161,7 +182,30 @@ export function EntryForm({ kind, orgId, id, version, values, stored, assets, fo
       <input type="hidden" name="version" value={version} />
       {linkTo ? <input type="hidden" name="linkTo" value={linkTo} /> : null}
       <div className="form-grid">
-        {def.fields.map((f, i) => f.name === "userVaultKey" ? null : f.name === "credentialSource" ? (
+        {def.fields.map((f, i) => f.name === "userVaultKey" || (kind === "otp" && ["algorithm", "digits", "period"].includes(f.name)) ? null
+          : kind === "otp" && f.name === "totp" ? (
+          <fieldset key={f.name} className="cred-source wide">
+            <legend>Authenticator setup</legend>
+            <p className="help" style={{ marginTop: 0 }}>When a service shows a QR code to set up an authenticator app, scan it here.</p>
+            <OtpScan onScan={applyScan} formRef={formRef} />
+            <div className="manual-entry">
+              <div className="label">Can&apos;t scan the QR code? Enter the details manually</div>
+              <p className="help" style={{ marginTop: 0 }}>Look for &quot;Can&apos;t scan?&quot;, &quot;Enter a setup key&quot; or &quot;Manual entry&quot; on the service&apos;s setup page; it shows the key and, if they differ from the usual, the settings below.</p>
+              <div className="form-grid">
+                <div className="wide">
+                  <label htmlFor="totp">Setup key{id ? "" : " *"}</label>
+                  {control(f)}
+                  <div className="help">{f.help}</div>
+                </div>
+                {(["algorithm", "digits", "period"] as const).map((n) => {
+                  const fd = def.fields.find((x) => x.name === n)!;
+                  return <div key={n}><label htmlFor={n}>{fd.label}</label>{control(fd)}</div>;
+                })}
+              </div>
+              <p className="help">Most services use SHA-1, 6 digits and a new code every 30 seconds. Only change these if the service says so.</p>
+            </div>
+          </fieldset>
+        ) : f.name === "credentialSource" ? (
           <div key={f.name} className="wide">
             <CredentialSource initialSource={String(values.credentialSource ?? "none")} vaultKey={String(values.userVaultKey ?? "")}
               options={credentialOptions} initialLinked={linkedIds} />
@@ -172,6 +216,7 @@ export function EntryForm({ kind, orgId, id, version, values, stored, assets, fo
               <label htmlFor={f.name}>{f.label}{f.required ? " *" : ""}</label>
               {control(f)}
               {f.name === "host" && fetching ? <div className="help" role="status">{fetching}</div> : f.help ? <div className="help">{f.help}</div> : null}
+              {f.name === "totp" && kind === "credentials" ? <OtpScan onScan={applyScan} formRef={formRef} /> : null}
             </div>
             {i === 0 ? (
               <div>
@@ -188,7 +233,7 @@ export function EntryForm({ kind, orgId, id, version, values, stored, assets, fo
       {state ? <div style={{ marginTop: 16 }}><Message state={state} /></div> : null}
       <div className="form-foot">
         <button type="submit" className="btn btn-primary" disabled={pending}>
-          {pending ? "Saving..." : id ? "Save changes" : `Create ${def.singular.toLowerCase()}`}
+          {pending ? "Saving..." : id ? "Save changes" : `Create ${lowerLabel(def.singular)}`}
         </button>
         <Link href={cancelHref} className="btn btn-ghost">Cancel</Link>
       </div>

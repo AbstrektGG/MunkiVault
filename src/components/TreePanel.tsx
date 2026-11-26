@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { entryInfoAction, loadTreeAction, type EntryInfo } from "@/app/actions";
 import type { OrgTree } from "@/lib/folders";
-import { ENTITIES, KINDS } from "@/lib/entities";
+import { ENTITIES, KINDS, lowerLabel } from "@/lib/entities";
 import { copyPlain, copySecret, viewSecret, type Target } from "./commands";
 import { EntryIcon, FolderIcon, OrgIcon } from "./icons";
 
@@ -23,7 +23,7 @@ type Menu = { x: number; y: number; node: TreeNode; info?: EntryInfo | { error: 
 const OPEN_KEY = "mv_tree_open";
 const ORG_KEY = "mv_tree_org";
 const WIDTH_KEY = "mv_tree_width";
-const ROUTE = /^\/orgs\/([0-9a-f-]{36})(?:\/(folders|assets|credentials|certificates|documents)\/([0-9a-f-]{36}))?/;
+const ROUTE = /^\/orgs\/([0-9a-f-]{36})(?:\/(folders|assets|credentials|certificates|documents|otp)\/([0-9a-f-]{36}))?/;
 const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
 
 function store<T>(key: string, fallback: T): T {
@@ -118,7 +118,7 @@ export function TreePanel({ vaults, personalId }: { vaults: Vault[]; personalId:
 
   // ----- Context menu -----
   const openMenu = async (x: number, y: number, node: TreeNode) => {
-    const needsInfo = node.type === "entry" && (node.kind === "assets" || node.kind === "credentials");
+    const needsInfo = node.type === "entry" && (node.kind === "assets" || node.kind === "credentials" || node.kind === "otp");
     setMenu({ x, y, node, info: needsInfo ? "loading" : undefined });
     if (needsInfo) {
       const info = await entryInfoAction(orgId, node.kind, node.id);
@@ -173,8 +173,8 @@ export function TreePanel({ vaults, personalId }: { vaults: Vault[]; personalId:
       <>
         <MenuItem icon={<FolderPlus size={15} />} label="New folder" disabled={!canEdit} href={`${base}/folders/new${folderId ? `?parent=${folderId}` : ""}`} />
         {KINDS.map((k) => (
-          <MenuItem key={k} icon={<EntryIcon icon={k === "assets" ? "server" : k === "credentials" ? "credential" : k === "certificates" ? "certificate" : "document"} size={15} />}
-            label={`New ${ENTITIES[k].singular.toLowerCase()}`} disabled={!canEdit} href={`${base}/${k}/new${folderId ? `?folder=${folderId}` : ""}`} />
+          <MenuItem key={k} icon={<EntryIcon icon={k === "assets" ? "server" : k === "credentials" ? "credential" : k === "certificates" ? "certificate" : k === "otp" ? "otp" : "document"} size={15} />}
+            label={`New ${lowerLabel(ENTITIES[k].singular)}`} disabled={!canEdit} href={`${base}/${k}/new${folderId ? `?folder=${folderId}` : ""}`} />
         ))}
       </>
     );
@@ -195,6 +195,7 @@ export function TreePanel({ vaults, personalId }: { vaults: Vault[]; personalId:
     const pending = m.info === "loading";
     const secretOff = !info?.canReveal ? "Editor access is required to reveal secrets" : undefined;
     const hasCreds = n.kind === "assets" || n.kind === "credentials";
+    const isOtp = n.kind === "otp";
     return (
       <>
         <MenuItem icon={<ExternalLink size={15} />} label="Open" href={href} />
@@ -213,6 +214,14 @@ export function TreePanel({ vaults, personalId }: { vaults: Vault[]; personalId:
             <MenuItem icon={<KeyRound size={15} />} label="Copy OTP" disabled={!info?.hasTotp || !info.canReveal} title={secretOff} onClick={() => copySecret(target, "totp")} />
             <MenuItem icon={<Eye size={15} />} label="View password" disabled={!info?.hasPassword || !info.canReveal} title={secretOff} onClick={() => viewSecret(target, "password")} />
             <MenuItem icon={<Timer size={15} />} label="View OTP" disabled={!info?.hasTotp || !info.canReveal} title={secretOff} onClick={() => viewSecret(target, "totp")} />
+          </>
+        ) : null}
+        {isOtp ? (
+          <>
+            <hr />
+            <MenuItem icon={<KeyRound size={15} />} label="Copy OTP" disabled={!info?.hasTotp || !info.canReveal} title={secretOff} onClick={() => copySecret(target, "totp")} />
+            <MenuItem icon={<Timer size={15} />} label="View OTP" disabled={!info?.hasTotp || !info.canReveal} title={secretOff} onClick={() => viewSecret(target, "totp")} />
+            <MenuItem icon={<User size={15} />} label="Copy account" disabled={!info?.username} onClick={() => copyPlain(info!.username!, "Account")} />
           </>
         ) : null}
         {info?.hostname ? <MenuItem icon={<Globe size={15} />} label="Copy host" onClick={() => copyPlain(info.hostname!, "Host")} /> : null}

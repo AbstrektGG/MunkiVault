@@ -77,22 +77,93 @@ export function base32Decode(input: string): Buffer {
   return Buffer.from(out);
 }
 
-// Accepts a bare base32 seed or an otpauth:// URI.
-export function parseTotpSeed(input: string): string {
+export function base32Encode(buf: Buffer): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, value = 0, out = "";
+  for (const byte of buf) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) { out += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
+
+// ---- One-time passwords (TOTP, RFC 6238) ----
+
+export const OTP_ALGORITHMS = ["SHA1", "SHA256", "SHA512"] as const;
+export type OtpAlgorithm = (typeof OTP_ALGORITHMS)[number];
+export type OtpSettings = { algorithm: OtpAlgorithm; digits: number; period: number };
+export type OtpConfig = OtpSettings & { secret: string; issuer?: string; account?: string };
+export const OTP_DEFAULTS: OtpSettings = { algorithm: "SHA1", digits: 6, period: 30 };
+
+function checkSettings(s: OtpSettings) {
+  if (!OTP_ALGORITHMS.includes(s.algorithm)) throw new Error("Unsupported OTP algorithm. Use SHA1, SHA256 or SHA512.");
+  if (!Number.isInteger(s.digits) || s.digits < 6 || s.digits > 8) throw new Error("OTP codes must be 6 to 8 digits.");
+  if (!Number.isInteger(s.period) || s.period < 10 || s.period > 300) throw new Error("The OTP period must be between 10 and 300 seconds.");
+}
+
+// Accepts a bare base32 key or an otpauth://totp/ link (as encoded in authenticator QR codes).
+export function parseOtp(input: string): OtpConfig {
   const trimmed = input.trim();
-  const seed = trimmed.startsWith("otpauth://") ? new URL(trimmed).searchParams.get("secret") ?? "" : trimmed;
-  const clean = seed.toUpperCase().replace(/[\s=-]/g, "");
-  if (clean.length < 16 || base32Decode(clean).length < 10) throw new Error("TOTP seed is too short or not base32");
-  return clean;
+  let secret = trimmed, settings = { ...OTP_DEFAULTS }, issuer: string | undefined, account: string | undefined;
+  if (/^otpauth-migration:/i.test(trimmed)) throw new Error("Google Authenticator export codes are not supported. Scan the QR code from the service itself.");
+  if (/^otpauth:/i.test(trimmed)) {
+    const url = new URL(trimmed);
+    if (url.host.toLowerCase() !== "totp") throw new Error("Only time-based codes (TOTP) are supported, not counter-based (HOTP).");
+    const p = url.searchParams;
+    secret = p.get("secret") ?? "";
+    const label = decodeURIComponent(url.pathname.replace(/^\//, ""));
+    const [labelIssuer, labelAccount] = label.includes(":") ? [label.slice(0, label.indexOf(":")), label.slice(label.indexOf(":") + 1)] : [undefined, label];
+    issuer = (p.get("issuer") ?? labelIssuer)?.trim() || undefined;
+    account = labelAccount?.trim() || undefined;
+    settings = {
+      algorithm: (p.get("algorithm")?.toUpperCase().replace("-", "") ?? "SHA1") as OtpAlgorithm,
+      digits: p.has("digits") ? Number(p.get("digits")) : 6,
+      period: p.has("period") ? Number(p.get("period")) : 30,
+    };
+    checkSettings(settings);
+  }
+  const clean = secret.toUpperCase().replace(/[\s=-]/g, "");
+  if (!/^[A-Z2-7]+$/.test(clean)) throw new Error("The OTP secret key must be base32 (letters A-Z and digits 2-7).");
+  if (base32Decode(clean).length < 10) throw new Error("The OTP secret key is too short.");
+  return { secret: clean, ...settings, issuer, account };
+}
+
+// What gets encrypted and stored: the bare key, or an otpauth link when the settings are not the defaults.
+export function canonicalOtp(input: string): string {
+  const c = parseOtp(input);
+  if (c.algorithm === "SHA1" && c.digits === 6 && c.period === 30) return c.secret;
+  return `otpauth://totp/MunkiVault?secret=${c.secret}&algorithm=${c.algorithm}&digits=${c.digits}&period=${c.period}`;
+}
+
+function hotp(key: Buffer, counter: number, algorithm: OtpAlgorithm, digits: number): string {
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(counter));
+  const mac = createHmac(algorithm.toLowerCase(), key).update(msg).digest();
+  const offset = mac[mac.length - 1] & 0x0f;
+  return ((mac.readUInt32BE(offset) & 0x7fffffff) % 10 ** digits).toString().padStart(digits, "0");
+}
+
+export type OtpCode = { code: string; next: string; remaining: number; period: number; digits: number };
+
+// `stored` is what canonicalOtp produced; `overrides` (from an OTP entry's own settings) win over it.
+export function otpCode(stored: string, now = Date.now(), overrides?: Partial<OtpSettings>): OtpCode {
+  const cfg = { ...parseOtp(stored), ...Object.fromEntries(Object.entries(overrides ?? {}).filter(([, v]) => v !== null && v !== undefined)) } as OtpConfig;
+  checkSettings(cfg);
+  const key = base32Decode(cfg.secret);
+  const seconds = Math.floor(now / 1000);
+  const counter = Math.floor(seconds / cfg.period);
+  return {
+    code: hotp(key, counter, cfg.algorithm, cfg.digits),
+    next: hotp(key, counter + 1, cfg.algorithm, cfg.digits),
+    remaining: cfg.period - (seconds % cfg.period),
+    period: cfg.period,
+    digits: cfg.digits,
+  };
 }
 
 export function totp(seed: string, now = Date.now()): { code: string; remaining: number } {
-  const step = 30;
-  const counter = Math.floor(now / 1000 / step);
-  const msg = Buffer.alloc(8);
-  msg.writeBigUInt64BE(BigInt(counter));
-  const mac = createHmac("sha1", base32Decode(seed)).update(msg).digest();
-  const offset = mac[mac.length - 1] & 0x0f;
-  const code = ((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).toString().padStart(6, "0");
-  return { code, remaining: step - (Math.floor(now / 1000) % step) };
+  const { code, remaining } = otpCode(seed, now);
+  return { code, remaining };
 }

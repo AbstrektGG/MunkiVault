@@ -94,6 +94,19 @@ export const credentials = pgTable("credentials", {
   notes: text("notes"),
 }, (t) => [index("credentials_org_idx").on(t.orgId)]);
 
+// Authenticator (MFA) entries: a TOTP secret plus the settings needed to generate codes.
+export const otps = pgTable("otps", {
+  ...entry(),
+  issuer: text("issuer"),
+  account: text("account"),
+  totp: text("totp"), // AES-256-GCM ciphertext of the base32 secret key
+  algorithm: text("algorithm").notNull().default("SHA1"),
+  digits: integer("digits").notNull().default(6),
+  period: integer("period").notNull().default(30),
+  url: text("url"),
+  notes: text("notes"),
+}, (t) => [index("otps_org_idx").on(t.orgId)]);
+
 // A device can use several credentials and a credential can serve many devices. The lowest position is the default.
 export const assetCredentials = pgTable("asset_credentials", {
   assetId: uuid("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),

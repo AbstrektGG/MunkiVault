@@ -1,14 +1,14 @@
 import "server-only";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { assets, certificates, credentials, documents, revisions, users } from "@/db/schema";
-import { encryptSecret, parseTotpSeed } from "./crypto";
+import { assets, certificates, credentials, documents, otps, revisions, users } from "@/db/schema";
+import { encryptSecret, canonicalOtp, parseOtp } from "./crypto";
 import { ENTITIES, type FieldDef, type Kind } from "./entities";
 import { isUuid } from "./access";
 
 // The four entry tables share the columns in `entry()`; everything else is driven by ENTITIES.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const TABLES: Record<Kind, any> = { assets, credentials, certificates, documents };
+const TABLES: Record<Kind, any> = { assets, credentials, certificates, documents, otp: otps };
 
 export type Entry = { id: string; orgId: string; name: string; version: number; createdAt: Date; updatedAt: Date; updatedBy: string | null } & Record<string, unknown>;
 export type Values = Record<string, string | number | null>;
@@ -48,6 +48,12 @@ async function parseField(f: FieldDef, raw: string, orgId: string): Promise<stri
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value))) throw new Error(`${f.label} is not a valid date.`);
       return value;
     case "select":
+      // OTP code length and period are offered as common choices, but any valid value is accepted.
+      if (f.name === "digits" || f.name === "period") {
+        const n = Number(value), [lo, hi] = f.name === "digits" ? [6, 8] : [10, 300];
+        if (!Number.isInteger(n) || n < lo || n > hi) throw new Error(`${f.label} must be between ${lo} and ${hi}.`);
+        return n;
+      }
       if (!f.options?.some(([v]) => v === value)) throw new Error(`${f.label} has an unknown value.`);
       return value;
     case "asset": {
@@ -59,7 +65,7 @@ async function parseField(f: FieldDef, raw: string, orgId: string): Promise<stri
     }
     case "secret":
       if (value.length > MAX.secret) throw new Error(`${f.label} is too long.`);
-      return encryptSecret(f.name === "totp" ? parseTotpSeed(value) : value);
+      return encryptSecret(f.name === "totp" ? canonicalOtp(value) : value);
     default:
       if (value.length > MAX[f.kind]) throw new Error(`${f.label} is too long.`);
       return value;
@@ -68,7 +74,17 @@ async function parseField(f: FieldDef, raw: string, orgId: string): Promise<stri
 
 // Parses submitted form data into column values. For secrets, an empty value keeps what is stored
 // unless the matching "clear_<name>" box is ticked.
-export async function parseForm(kind: Kind, orgId: string, form: FormData, existing: Entry | null): Promise<Values> {
+export async function parseForm(kind: Kind, orgId: string, input: FormData, existing: Entry | null): Promise<Values> {
+  let form = input;
+  if (kind === "otp" && /^otpauth:/i.test(String(input.get("totp") ?? "").trim())) {
+    // A pasted otpauth:// link carries its own settings; they replace whatever the selects say.
+    const cfg = parseOtp(String(input.get("totp")));
+    form = new FormData();
+    for (const [k, v] of input.entries()) form.append(k, v);
+    form.set("algorithm", cfg.algorithm); form.set("digits", String(cfg.digits)); form.set("period", String(cfg.period));
+    if (!String(form.get("issuer") ?? "").trim() && cfg.issuer) form.set("issuer", cfg.issuer);
+    if (!String(form.get("account") ?? "").trim() && cfg.account) form.set("account", cfg.account);
+  }
   const out: Values = {};
   for (const f of ENTITIES[kind].fields) {
     const raw = String(form.get(f.name) ?? "");
