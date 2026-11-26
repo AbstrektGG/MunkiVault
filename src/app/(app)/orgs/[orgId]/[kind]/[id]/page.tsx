@@ -13,6 +13,9 @@ import { Markdown } from "@/components/Markdown";
 import { SecretReveal } from "@/components/SecretReveal";
 import { RecheckCert } from "@/components/RecheckCert";
 import { ConfirmButton, CopyButton } from "@/components/ui";
+import { FolderCrumbs } from "@/components/FolderCrumbs";
+import { EntryIcon, entryIconKey } from "@/components/icons";
+import { listFolders, pathTo } from "@/lib/folders";
 import { ExpiryBadge, fmtDate } from "@/components/server";
 
 const EXPIRY_FIELDS = ["notAfter", "expiresAt", "warrantyExpires"];
@@ -40,6 +43,7 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
   const canEdit = can(level, "editor");
 
   const [editor] = entry.updatedBy ? await db.select({ name: users.name }).from(users).where(eq(users.id, entry.updatedBy)).limit(1) : [];
+  const folderPath = pathTo(await listFolders(orgId), (entry.folderId as string | null) ?? null);
   const linkedAsset = entry.assetId ? await getEntry("assets", orgId, String(entry.assetId)) : null;
   const [creds, certs] = kind === "assets"
     ? await Promise.all([linkedEntries("credentials", orgId, id), linkedEntries("certificates", orgId, id)])
@@ -65,8 +69,8 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
     <div className="stack">
       <div className="page-head" style={{ marginBottom: 0 }}>
         <div>
-          <div className="crumbs"><Link href={`/orgs/${orgId}/${kind}`}>{def.plural}</Link></div>
-          <h2 style={{ fontSize: 19 }}>{entry.name}</h2>
+          <FolderCrumbs orgId={orgId} path={folderPath} />
+          <h2 style={{ fontSize: 19 }} className="with-icon"><EntryIcon icon={entryIconKey(kind, entry)} size={19} />{entry.name}</h2>
         </div>
         <div className="actions">
           {kind === "assets" ? connectLink(orgId, entry) : null}
@@ -104,7 +108,7 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
           <section className="card" key={k}>
             <div className="card-head">
               <h2>{ENTITIES[k].plural}</h2>
-              {canEdit ? <Link className="btn btn-sm" href={`/orgs/${orgId}/${k}/new?asset=${id}`}><Plus size={14} />Add</Link> : null}
+              {canEdit ? <Link className="btn btn-sm" href={`/orgs/${orgId}/${k}/new?asset=${id}${entry.folderId ? `&folder=${entry.folderId}` : ""}`}><Plus size={14} />Add</Link> : null}
             </div>
             {rows.length ? (
               <table><tbody>

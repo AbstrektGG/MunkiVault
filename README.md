@@ -9,7 +9,9 @@ single sign-on.
 
 | Area | What it does |
 | --- | --- |
+| Navigation tree | Remote Desktop Manager style tree on the left: organizations, nested folders and items. Details open on the right. The sidebar collapses to an icon rail |
 | Organizations | Customers and internal infrastructure, each with its own entries, activity and access list |
+| Folders | Nest folders inside an organization (sites, servers, switches, passwords and so on), each with its own icon. Any item can live in any folder. Deleting a folder moves its contents up a level |
 | Systems | Servers, network gear, cloud services and more, with hostname, IP, OS, serial, warranty and Markdown notes |
 | Remote connections | One click connect: downloads a `.rdp` file, or opens `ssh://`, `https://`, `vnc://` links |
 | Credentials | Passwords and TOTP seeds encrypted with AES-256-GCM. Hidden until revealed, auto-hide after 30 seconds, every reveal audited |
@@ -123,6 +125,7 @@ single place to apply the MunkiVault design system values.
 src/db/schema.ts        Tables (Drizzle ORM)
 src/lib/entities.ts     Field definitions for systems, credentials, certificates and documents
 src/lib/store.ts        Create, update, delete and restore with version history
+src/lib/folders.ts      Folders, folder paths and the navigation tree
 src/lib/access.ts       Organization access checks and audit logging
 src/lib/auth.ts         Sessions and sign-in throttling
 src/lib/oidc.ts         OpenID Connect sign-in
@@ -131,8 +134,31 @@ src/app/actions.ts      Server actions (all mutations)
 src/app/(app)/          Signed-in pages
 ```
 
+Moving an item between folders is recorded in the audit log but does not create a new version, since
+it does not change the item itself.
+
 Adding a field to an entry type is a column in `schema.ts`, a line in `entities.ts` and
 `npm run db:generate`; forms, detail pages and history pick it up.
+
+## Updating an existing install
+
+```bash
+git pull
+```
+
+```bash
+npm install
+```
+
+```bash
+npm run db:migrate
+```
+
+```bash
+npm run build
+```
+
+Then restart with `npm start`. `db:migrate` reads `DATABASE_URL` from the shell, so export it first.
 
 ## Tests
 

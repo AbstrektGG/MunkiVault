@@ -97,10 +97,9 @@ export const ENTITIES: Record<Kind, EntityDef> = {
   },
   documents: {
     kind: "documents", singular: "Document", plural: "Documents",
-    columns: ["folder"],
+    columns: [],
     fields: [
       { ...name, label: "Title" },
-      { name: "folder", label: "Folder", kind: "text", placeholder: "Runbooks" },
       { name: "content", label: "Content", kind: "markdown", wide: true },
     ],
   },
@@ -120,3 +119,12 @@ export const LEVEL_HELP: Record<Level, string> = {
   editor: "Reveal secrets, create and edit entries, restore versions.",
   manager: "Everything an editor can do, plus delete entries and manage access.",
 };
+
+// Folder icons, in the order offered when creating a folder.
+export const FOLDER_ICONS = [
+  ["folder", "Folder"], ["site", "Site / location"], ["servers", "Servers"], ["virtual", "Virtual hosts / VMs"],
+  ["network", "Network"], ["firewall", "Routers / firewalls"], ["switches", "Switches"], ["wireless", "Wireless"],
+  ["storage", "Storage / NAS"], ["workstations", "Workstations"], ["printers", "Printers"], ["ups", "UPS / power"],
+  ["vpn", "VPN"], ["cloud", "Cloud"], ["passwords", "Passwords and logins"], ["documents", "Documents"],
+] as const;
+export type FolderIcon = (typeof FOLDER_ICONS)[number][0];

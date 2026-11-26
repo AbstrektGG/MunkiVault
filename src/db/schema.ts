@@ -1,5 +1,5 @@
 import {
-  pgTable, uuid, text, timestamp, integer, boolean, jsonb, date, primaryKey, index, uniqueIndex,
+  type AnyPgColumn, pgTable, uuid, text, timestamp, integer, boolean, jsonb, date, primaryKey, index, uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 const id = () => uuid("id").primaryKey().defaultRandom();
@@ -39,11 +39,23 @@ export const orgAccess = pgTable("org_access", {
   level: text("level").notNull(), // viewer | editor | manager
 }, (t) => [primaryKey({ columns: [t.userId, t.orgId] })]);
 
+// Folders nest inside an organization; entries of any type can live in a folder or at the root.
+export const folders = pgTable("folders", {
+  id: id(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  parentId: uuid("parent_id").references((): AnyPgColumn => folders.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  icon: text("icon").notNull().default("folder"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+}, (t) => [index("folders_org_idx").on(t.orgId), index("folders_parent_idx").on(t.parentId)]);
+
 // Columns shared by every vault entry type.
 const entry = () => ({
   id: id(),
   orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  folderId: uuid("folder_id").references(() => folders.id, { onDelete: "set null" }),
   version: integer("version").notNull().default(1),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
@@ -95,7 +107,6 @@ export const certificates = pgTable("certificates", {
 
 export const documents = pgTable("documents", {
   ...entry(),
-  folder: text("folder"),
   content: text("content"),
 }, (t) => [index("documents_org_idx").on(t.orgId)]);
 

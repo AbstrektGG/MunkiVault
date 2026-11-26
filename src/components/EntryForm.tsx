@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useActionState, useRef, useState } from "react";
+import { Fragment, startTransition, useActionState, useRef, useState } from "react";
 import Link from "next/link";
 import { Download, Wand2 } from "lucide-react";
 import { fetchCertAction, saveEntryAction } from "@/app/actions";
@@ -15,10 +15,12 @@ type Props = {
   values: Record<string, string | number | null>;
   stored: string[];
   assets: { id: string; name: string }[];
+  folders: { id: string; label: string }[];
+  folderId: string | null;
   cancelHref: string;
 };
 
-export function EntryForm({ kind, orgId, id, version, values, stored, assets, cancelHref }: Props) {
+export function EntryForm({ kind, orgId, id, version, values, stored, assets, folders, folderId, cancelHref }: Props) {
   const def = ENTITIES[kind];
   const [state, action, pending] = useActionState(saveEntryAction.bind(null, kind, orgId, id), null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -104,12 +106,23 @@ export function EntryForm({ kind, orgId, id, version, values, stored, assets, ca
     }}>
       <input type="hidden" name="version" value={version} />
       <div className="form-grid">
-        {def.fields.map((f) => (
-          <div key={f.name} className={f.wide ? "wide" : undefined}>
-            <label htmlFor={f.name}>{f.label}{f.required ? " *" : ""}</label>
-            {control(f)}
-            {f.name === "host" && fetching ? <div className="help" role="status">{fetching}</div> : f.help ? <div className="help">{f.help}</div> : null}
-          </div>
+        {def.fields.map((f, i) => (
+          <Fragment key={f.name}>
+            <div className={f.wide ? "wide" : undefined}>
+              <label htmlFor={f.name}>{f.label}{f.required ? " *" : ""}</label>
+              {control(f)}
+              {f.name === "host" && fetching ? <div className="help" role="status">{fetching}</div> : f.help ? <div className="help">{f.help}</div> : null}
+            </div>
+            {i === 0 ? (
+              <div>
+                <label htmlFor="folderId">Folder</label>
+                <select id="folderId" name="folderId" defaultValue={folderId ?? ""}>
+                  <option value="">Top level of the organization</option>
+                  {folders.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                </select>
+              </div>
+            ) : null}
+          </Fragment>
         ))}
       </div>
       {state ? <div style={{ marginTop: 16 }}><Message state={state} /></div> : null}

@@ -8,6 +8,8 @@ import { ENTITIES, isKind, optionLabel, type FieldDef } from "@/lib/entities";
 import { fmtDateTime } from "@/lib/format";
 import { getEntry, listEntries, listRevisions } from "@/lib/store";
 import { ConfirmButton } from "@/components/ui";
+import { FolderCrumbs } from "@/components/FolderCrumbs";
+import { listFolders, pathTo } from "@/lib/folders";
 
 type Snapshot = Record<string, unknown>;
 
@@ -70,7 +72,7 @@ export default async function HistoryPage({ params }: { params: Promise<{ orgId:
   return (
     <div className="stack">
       <div>
-        <div className="crumbs"><Link href={`/orgs/${orgId}/${kind}`}>{def.plural}</Link> / <Link href={`/orgs/${orgId}/${kind}/${id}`}>{entry.name}</Link></div>
+        <FolderCrumbs orgId={orgId} path={pathTo(await listFolders(orgId), (entry.folderId as string | null) ?? null)} tail={{ label: entry.name, href: `/orgs/${orgId}/${kind}/${id}` }} />
         <h2 style={{ fontSize: 19 }}>Version history</h2>
       </div>
       <section className="card">

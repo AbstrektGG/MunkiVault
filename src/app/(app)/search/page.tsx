@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, ilike, inArray, or, type SQL } from "drizzle-orm";
+import { and, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { assets, certificates, credentials, documents } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
@@ -27,8 +27,8 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
         .where(and(inArray(credentials.orgId, ids), any(credentials.name, credentials.username, credentials.url, credentials.notes))).limit(50),
       db.select({ id: certificates.id, orgId: certificates.orgId, name: certificates.name, extra: certificates.host }).from(certificates)
         .where(and(inArray(certificates.orgId, ids), any(certificates.name, certificates.host, certificates.subject, certificates.sans, certificates.issuer))).limit(50),
-      db.select({ id: documents.id, orgId: documents.orgId, name: documents.name, extra: documents.folder }).from(documents)
-        .where(and(inArray(documents.orgId, ids), any(documents.name, documents.content, documents.folder))).limit(50),
+      db.select({ id: documents.id, orgId: documents.orgId, name: documents.name, extra: sql<string | null>`null` }).from(documents)
+        .where(and(inArray(documents.orgId, ids), any(documents.name, documents.content))).limit(50),
     ]);
     const tag = (rows: Omit<Hit, "kind">[], kind: Kind) => rows.map((r) => ({ ...r, kind }));
     hits = [...tag(a, "assets"), ...tag(c, "credentials"), ...tag(s, "certificates"), ...tag(d, "documents")];

@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { can, requireOrg } from "@/lib/access";
 import { ENTITIES, isKind, optionLabel } from "@/lib/entities";
 import { listEntries } from "@/lib/store";
+import { listFolders, pathTo } from "@/lib/folders";
 import { Empty, ExpiryBadge, fmtDate } from "@/components/server";
 
 const EXPIRY_FIELDS = ["notAfter", "expiresAt", "warrantyExpires"];
@@ -13,7 +14,8 @@ export default async function EntryList({ params }: { params: Promise<{ orgId: s
   if (!isKind(kind)) notFound();
   const { level } = await requireOrg(orgId);
   const def = ENTITIES[kind];
-  const rows = await listEntries(kind, orgId);
+  const [rows, folders] = await Promise.all([listEntries(kind, orgId), listFolders(orgId)]);
+  const folderLabel = (id: unknown) => pathTo(folders, (id as string | null) ?? null).map((f) => f.name).join(" / ");
   const cols = def.columns.map((name) => def.fields.find((f) => f.name === name)!);
   return (
     <section className="card">
@@ -23,11 +25,12 @@ export default async function EntryList({ params }: { params: Promise<{ orgId: s
       </div>
       {rows.length ? (
         <div className="table-wrap"><table>
-          <thead><tr><th>{def.fields[0].label}</th>{cols.map((c) => <th key={c.name}>{c.label}</th>)}<th>Updated</th></tr></thead>
+          <thead><tr><th>{def.fields[0].label}</th><th>Folder</th>{cols.map((c) => <th key={c.name}>{c.label}</th>)}<th>Updated</th></tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
                 <td className="primary"><Link href={`/orgs/${orgId}/${kind}/${row.id}`}>{row.name}</Link></td>
+                <td className="muted">{row.folderId ? <Link href={`/orgs/${orgId}/folders/${row.folderId}`} className="muted">{folderLabel(row.folderId)}</Link> : "Top level"}</td>
                 {cols.map((c) => {
                   const v = row[c.name] as string | null;
                   return (

@@ -27,6 +27,16 @@
   --mv-success: #1f6b4f;
   --mv-success-soft: #e0efe8;
 
+  --mv-icon-folder: #b7791f;
+  --mv-icon-system: #2f6690;
+  --mv-icon-key: #8a5a00;
+  --mv-icon-cert: #1f6b4f;
+  --mv-icon-doc: #5b6257;
+  --mv-icon-org: #5b6257;
+
+  --mv-sidebar-width: 290px;
+  --mv-sidebar-collapsed: 60px;
+
   --mv-radius-sm: 4px;
   --mv-radius-md: 7px;
   --mv-radius-lg: 10px;
@@ -55,6 +65,13 @@
     --mv-warning-soft: #3a2e12;
     --mv-success: #5fc39a;
     --mv-success-soft: #1b3329;
+
+    --mv-icon-folder: #e3b55b;
+    --mv-icon-system: #7fb2dc;
+    --mv-icon-key: #f2c261;
+    --mv-icon-cert: #5fc39a;
+    --mv-icon-doc: #a2a99c;
+    --mv-icon-org: #a2a99c;
 
     --mv-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
     --mv-focus: 0 0 0 3px rgba(95, 195, 154, 0.4);

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireOrg } from "@/lib/access";
 import { ENTITIES, isKind } from "@/lib/entities";
 import { getEntry, listEntries } from "@/lib/store";
+import { folderOptions, listFolders } from "@/lib/folders";
 import { EntryForm } from "@/components/EntryForm";
 
 export default async function EditEntry({ params }: { params: Promise<{ orgId: string; kind: string; id: string }> }) {
@@ -22,7 +23,8 @@ export default async function EditEntry({ params }: { params: Promise<{ orgId: s
   return (
     <div className="stack">
       <h2>Edit {entry.name}</h2>
-      <EntryForm kind={kind} orgId={orgId} id={id} version={entry.version} values={values} stored={stored} assets={assets} cancelHref={`/orgs/${orgId}/${kind}/${id}`} />
+      <EntryForm kind={kind} orgId={orgId} id={id} version={entry.version} values={values} stored={stored} assets={assets}
+        folders={folderOptions(await listFolders(orgId))} folderId={(entry.folderId as string | null) ?? null} cancelHref={`/orgs/${orgId}/${kind}/${id}`} />
     </div>
   );
 }

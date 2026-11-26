@@ -8,6 +8,20 @@
       "when": 1795662847707,
       "tag": "0000_closed_komodo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795666264009,
+      "tag": "0001_folders",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795666264681,
+      "tag": "0002_document_folders",
+      "breakpoints": true
     }
   ]
 }

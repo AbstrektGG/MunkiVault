@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { orgAccess, organizations, users } from "@/db/schema";
+import { folders, orgAccess, organizations, users } from "@/db/schema";
 import {
   clearLoginFailures, clientIp, createSession, destroySession, destroyUserSessions, hasAnyUser, loginBlocked,
   passwordProblem, recordLoginFailure, requireAdmin, requireUser,
@@ -14,6 +14,8 @@ import { decryptSecret, hashPassword, totp, verifyPassword } from "@/lib/crypto"
 import { ENTITIES, LEVELS, isKind, type Kind, type Level } from "@/lib/entities";
 import { createEntry, deleteEntry, getEntry, parseForm, restoreRevision, updateEntry } from "@/lib/store";
 import { fetchCertificate, type FetchedCert } from "@/lib/certs";
+import { deleteFolder, descendantIds, getFolder, listFolders, loadTree, moveEntry, resolveFolder, type OrgTree } from "@/lib/folders";
+import { FOLDER_ICONS } from "@/lib/entities";
 
 export type FormState = { error?: string; ok?: string } | null;
 
@@ -103,11 +105,13 @@ export async function saveOrgAction(orgId: string | null, _prev: FormState, form
     const { user } = await requireOrg(orgId, "manager");
     await db.update(organizations).set({ name, kind, description, updatedAt: new Date() }).where(eq(organizations.id, orgId));
     await audit(user, "org.updated", { orgId, detail: name });
+    revalidatePath("/", "layout");
   } else {
     const user = await requireAdmin();
     const [row] = await db.insert(organizations).values({ name, kind, description }).returning({ id: organizations.id });
     id = row.id;
     await audit(user, "org.created", { orgId: id, detail: name });
+    revalidatePath("/", "layout");
   }
   redirect(`/orgs/${id}`);
 }
@@ -118,6 +122,7 @@ export async function deleteOrgAction(orgId: string, _prev: FormState, form: For
   if (str(form, "confirm") !== org.name) return { error: "Type the organization name exactly to confirm." };
   await db.delete(organizations).where(eq(organizations.id, orgId));
   await audit(user, "org.deleted", { detail: org.name });
+  revalidatePath("/", "layout");
   redirect("/orgs");
 }
 
@@ -136,7 +141,7 @@ export async function setAccessAction(orgId: string, _prev: FormState, form: For
       .onConflictDoUpdate({ target: [orgAccess.userId, orgAccess.orgId], set: { level } });
   }
   await audit(user, "access.changed", { orgId, detail: `${target.email}: ${level}` });
-  revalidatePath(`/orgs/${orgId}/access`);
+  revalidatePath("/", "layout");
   return { ok: `Access updated for ${target.name}.` };
 }
 
@@ -154,13 +159,20 @@ export async function saveEntryAction(kindRaw: string, orgId: string, id: string
         return { error: "Someone else saved this entry while you were editing. Reload to see their changes." };
       }
       const values = await parseForm(kind, orgId, form, existing);
+      const folderId = await resolveFolder(orgId, form.get("folderId"));
       if (await updateEntry(kind, existing, values, user.id)) {
         await audit(user, `${kind}.updated`, { orgId, entityType: kind, entityId: id, detail: String(values.name) });
+      }
+      // Where an entry lives is not part of its content, so moving it does not create a version.
+      if (folderId !== ((existing.folderId as string | null) ?? null)) {
+        await moveEntry(kind, id, folderId);
+        await audit(user, `${kind}.moved`, { orgId, entityType: kind, entityId: id, detail: String(values.name) });
       }
       target = id;
     } else {
       const values = await parseForm(kind, orgId, form, null);
-      target = await createEntry(kind, orgId, values, user.id);
+      const folderId = await resolveFolder(orgId, form.get("folderId"));
+      target = await createEntry(kind, orgId, values, user.id, folderId);
       await audit(user, `${kind}.created`, { orgId, entityType: kind, entityId: target, detail: String(values.name) });
     }
   } catch (err) {
@@ -183,6 +195,7 @@ export async function deleteEntryAction(kindRaw: string, orgId: string, id: stri
   if (existing) {
     await deleteEntry(kind, existing, user.id);
     await audit(user, `${kind}.deleted`, { orgId, entityType: kind, entityId: id, detail: existing.name });
+    if (existing.folderId) redirect(`/orgs/${orgId}/folders/${existing.folderId}`);
   }
   redirect(`/orgs/${orgId}/${kind}`);
 }
@@ -293,4 +306,55 @@ export async function updateUserAction(userId: string, _prev: FormState, form: F
   await audit(admin, "user.updated", { detail: `${target.email}: role ${role}${disabled ? ", disabled" : ""}${ssoOnly ? ", password removed" : password ? ", password reset" : ""}` });
   revalidatePath("/admin/users");
   return { ok: "Saved." };
+}
+
+// ---------- Folders and the navigation tree ----------
+
+export async function loadTreeAction(orgId: string): Promise<OrgTree | null> {
+  try {
+    await requireOrg(orgId);
+    return await loadTree(orgId);
+  } catch (err) {
+    if (isRedirect(err)) throw err;
+    return null;
+  }
+}
+
+export async function saveFolderAction(orgId: string, folderId: string | null, _prev: FormState, form: FormData): Promise<FormState> {
+  let target: string;
+  try {
+    const { user } = await requireOrg(orgId, "editor");
+    const name = str(form, "name");
+    const icon = str(form, "icon") || "folder";
+    if (!name || name.length > 120) return { error: "Enter a folder name (up to 120 characters)." };
+    if (!FOLDER_ICONS.some(([v]) => v === icon)) return { error: "Unknown folder icon." };
+    const parentId = await resolveFolder(orgId, form.get("parentId"));
+    if (folderId) {
+      const existing = await getFolder(orgId, folderId);
+      if (!existing) return { error: "This folder no longer exists." };
+      if (parentId && descendantIds(await listFolders(orgId), folderId).has(parentId)) {
+        return { error: "A folder cannot be moved inside itself." };
+      }
+      await db.update(folders).set({ name, icon, parentId, updatedAt: new Date() }).where(eq(folders.id, folderId));
+      await audit(user, "folder.updated", { orgId, entityType: "folders", entityId: folderId, detail: name });
+      target = folderId;
+    } else {
+      const [row] = await db.insert(folders).values({ orgId, name, icon, parentId }).returning({ id: folders.id });
+      await audit(user, "folder.created", { orgId, entityType: "folders", entityId: row.id, detail: name });
+      target = row.id;
+    }
+  } catch (err) {
+    if (isRedirect(err)) throw err;
+    return { error: message(err) };
+  }
+  redirect(`/orgs/${orgId}/folders/${target}`);
+}
+
+export async function deleteFolderAction(orgId: string, folderId: string) {
+  const { user } = await requireOrg(orgId, "manager");
+  const folder = await getFolder(orgId, folderId);
+  if (!folder) redirect(`/orgs/${orgId}`);
+  await deleteFolder(folder);
+  await audit(user, "folder.deleted", { orgId, entityType: "folders", entityId: folderId, detail: `${folder.name} (contents moved up one level)` });
+  redirect(folder.parentId ? `/orgs/${orgId}/folders/${folder.parentId}` : `/orgs/${orgId}`);
 }

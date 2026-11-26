@@ -88,10 +88,10 @@ async function writeRevision(tx: Pick<typeof db, "insert">, kind: Kind, orgId: s
   await tx.insert(revisions).values({ orgId, entityType: kind, entityId, version, action, snapshot, userId });
 }
 
-export async function createEntry(kind: Kind, orgId: string, values: Values, userId: string): Promise<string> {
+export async function createEntry(kind: Kind, orgId: string, values: Values, userId: string, folderId: string | null = null): Promise<string> {
   const t = TABLES[kind];
   return db.transaction(async (tx) => {
-    const [row] = await tx.insert(t).values({ ...values, orgId, updatedBy: userId }).returning({ id: t.id });
+    const [row] = await tx.insert(t).values({ ...values, orgId, folderId, updatedBy: userId }).returning({ id: t.id });
     await writeRevision(tx, kind, orgId, row.id, 1, "create", values, userId);
     return row.id as string;
   });
