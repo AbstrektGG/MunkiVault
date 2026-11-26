@@ -9,7 +9,10 @@ single sign-on.
 
 | Area | What it does |
 | --- | --- |
-| Navigation tree | Remote Desktop Manager style tree on the left: organizations, nested folders and items. Details open on the right. The sidebar collapses to an icon rail |
+| Layout | Remote Desktop Manager style: the app menu (collapsible to an icon rail), then a tree pane showing one vault at a time with a vault picker, filter and resizable width, then the selected item's details |
+| Right-click menu | On any tree item: Open, Connect, Copy username, Copy password, Copy OTP, View password, View OTP, Copy host, Edit properties. Folders offer New folder and New item. Shift+F10 opens it from the keyboard. The same actions sit in each item's header |
+| Device credentials | Set on the device: none, one or more linked credentials (the first is the default), or each user's personal vault. One credential can serve many devices; its page lists them under Used by. RDP files carry the username, never the password |
+| Personal vaults | Every user has a private vault that nobody else, administrators included, can open. A device set to "each user's personal vault" uses the credential with a given name from whoever is signed in, and every use is audited under that person |
 | Organizations | Customers and internal infrastructure, each with its own entries, activity and access list |
 | Folders | Nest folders inside an organization (sites, servers, switches, passwords and so on), each with its own icon. Any item can live in any folder. Deleting a folder moves its contents up a level |
 | Systems | Servers, network gear, cloud services and more, with hostname, IP, OS, serial, warranty and Markdown notes |
@@ -107,7 +110,11 @@ Keep one local administrator as a break-glass account.
 - **Passwords**: scrypt (N=32768, r=8, p=3). Sign-in is throttled per email and address.
 - **Sessions**: random 256 bit tokens, stored hashed, `HttpOnly` and `SameSite=Lax` cookies.
 - **Authorization**: every organization page and action checks the caller's level on the server.
-  Organizations a user cannot access respond with 404.
+  Organizations a user cannot access respond with 404. Viewers can see items but not reveal shared
+  secrets; they can use their own personal vault credential on devices set up for it.
+- **Personal vaults**: only the owner can open their vault. Administrators cannot open, search or
+  reveal another user's vault. Administrators can still see in the audit log that someone used
+  their personal credential on a device (never the secret itself).
 - **Markdown**: sanitised with DOMPurify before rendering.
 
 Known limits of this first version: sign-in throttling is held in memory (per process), there is no

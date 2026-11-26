@@ -3,6 +3,7 @@ import { requireOrg } from "@/lib/access";
 import { ENTITIES, isKind } from "@/lib/entities";
 import { getEntry, listEntries } from "@/lib/store";
 import { folderOptions, listFolders } from "@/lib/folders";
+import { linkedCredentials } from "@/lib/credentials";
 import { EntryForm } from "@/components/EntryForm";
 
 export default async function EditEntry({ params }: { params: Promise<{ orgId: string; kind: string; id: string }> }) {
@@ -20,11 +21,14 @@ export default async function EditEntry({ params }: { params: Promise<{ orgId: s
     if (f.kind === "secret") { if (entry[f.name]) stored.push(f.name); }
     else values[f.name] = (entry[f.name] as string | number | null) ?? null;
   }
+  const credentialOptions = kind === "assets" ? (await listEntries("credentials", orgId)).map((c) => ({ id: c.id, label: c.username ? `${c.name} (${c.username})` : c.name })) : [];
+  const linkedIds = kind === "assets" ? (await linkedCredentials(id)).map((c) => c.id) : [];
   return (
     <div className="stack">
       <h2>Edit {entry.name}</h2>
       <EntryForm kind={kind} orgId={orgId} id={id} version={entry.version} values={values} stored={stored} assets={assets}
-        folders={folderOptions(await listFolders(orgId))} folderId={(entry.folderId as string | null) ?? null} cancelHref={`/orgs/${orgId}/${kind}/${id}`} />
+        folders={folderOptions(await listFolders(orgId))} folderId={(entry.folderId as string | null) ?? null}
+        credentialOptions={credentialOptions} linkedIds={linkedIds} cancelHref={`/orgs/${orgId}/${kind}/${id}`} />
     </div>
   );
 }

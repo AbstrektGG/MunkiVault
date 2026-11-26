@@ -79,6 +79,10 @@ export async function parseForm(kind: Kind, orgId: string, form: FormData, exist
     if (f.required && value === null) throw new Error(`${f.label} is required.`);
     out[f.name] = value;
   }
+  if (kind === "assets") {
+    if (out.credentialSource === "user" && !out.userVaultKey) throw new Error("Enter the credential name each user keeps in their personal vault.");
+    if (out.credentialSource !== "user") out.userVaultKey = null;
+  }
   return out;
 }
 

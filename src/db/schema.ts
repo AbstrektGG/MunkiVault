@@ -27,11 +27,13 @@ export const sessions = pgTable("sessions", {
 export const organizations = pgTable("organizations", {
   id: id(),
   name: text("name").notNull(),
-  kind: text("kind").notNull().default("customer"), // customer | internal
+  kind: text("kind").notNull().default("customer"), // customer | internal | personal
   description: text("description"),
+  // Set only for personal vaults: the one user who can open it. Administrators cannot.
+  ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
-});
+}, (t) => [uniqueIndex("organizations_owner_idx").on(t.ownerId)]);
 
 export const orgAccess = pgTable("org_access", {
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -74,6 +76,9 @@ export const assets = pgTable("assets", {
   serialNumber: text("serial_number"),
   location: text("location"),
   protocol: text("protocol").notNull().default("none"),
+  // none | linked (credentials linked from this vault) | user (each user's personal vault, matched by name)
+  credentialSource: text("credential_source").notNull().default("none"),
+  userVaultKey: text("user_vault_key"),
   port: integer("port"),
   warrantyExpires: date("warranty_expires"),
   notes: text("notes"),
@@ -81,7 +86,6 @@ export const assets = pgTable("assets", {
 
 export const credentials = pgTable("credentials", {
   ...entry(),
-  assetId: uuid("asset_id").references(() => assets.id, { onDelete: "set null" }),
   username: text("username"),
   password: text("password"), // AES-256-GCM ciphertext
   url: text("url"),
@@ -89,6 +93,13 @@ export const credentials = pgTable("credentials", {
   expiresAt: date("expires_at"),
   notes: text("notes"),
 }, (t) => [index("credentials_org_idx").on(t.orgId)]);
+
+// A device can use several credentials and a credential can serve many devices. The lowest position is the default.
+export const assetCredentials = pgTable("asset_credentials", {
+  assetId: uuid("asset_id").notNull().references(() => assets.id, { onDelete: "cascade" }),
+  credentialId: uuid("credential_id").notNull().references(() => credentials.id, { onDelete: "cascade" }),
+  position: integer("position").notNull().default(0),
+}, (t) => [primaryKey({ columns: [t.assetId, t.credentialId] }), index("asset_credentials_credential_idx").on(t.credentialId)]);
 
 export const certificates = pgTable("certificates", {
   ...entry(),

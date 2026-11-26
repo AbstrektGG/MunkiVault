@@ -37,6 +37,12 @@ export const PROTOCOLS = [
   ["none", "None"], ["rdp", "RDP"], ["ssh", "SSH"], ["https", "HTTPS"], ["http", "HTTP"], ["vnc", "VNC"],
 ] as const;
 
+export const CREDENTIAL_SOURCES = [
+  ["none", "None"],
+  ["linked", "Linked credentials"],
+  ["user", "Each user's personal vault"],
+] as const;
+
 export const DEFAULT_PORTS: Record<string, number> = { rdp: 3389, ssh: 22, https: 443, http: 80, vnc: 5900 };
 
 const name: FieldDef = { name: "name", label: "Name", kind: "text", required: true, wide: true };
@@ -60,6 +66,8 @@ export const ENTITIES: Record<Kind, EntityDef> = {
       { name: "warrantyExpires", label: "Warranty expires", kind: "date" },
       { name: "protocol", label: "Remote connection", kind: "select", options: PROTOCOLS, required: true },
       { name: "port", label: "Port", kind: "number", help: "Leave empty for the protocol default." },
+      { name: "credentialSource", label: "Credentials", kind: "select", options: CREDENTIAL_SOURCES, required: true, wide: true },
+      { name: "userVaultKey", label: "Credential name in each user's personal vault", kind: "text" },
       { name: "notes", label: "Notes", kind: "markdown", wide: true },
     ],
   },
@@ -68,7 +76,6 @@ export const ENTITIES: Record<Kind, EntityDef> = {
     columns: ["username", "url", "expiresAt"],
     fields: [
       name,
-      assetRef,
       { name: "username", label: "Username", kind: "text", mono: true },
       { name: "password", label: "Password", kind: "secret" },
       { name: "url", label: "URL", kind: "text", mono: true, placeholder: "https://" },

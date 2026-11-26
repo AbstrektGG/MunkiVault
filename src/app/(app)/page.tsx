@@ -25,7 +25,7 @@ export default async function Dashboard() {
       : [],
   ]);
   const stats: [string, number, string][] = [
-    ["Organizations", orgs.length, "/orgs"], ["Systems", nAssets, "/orgs"], ["Credentials", nCreds, "/orgs"],
+    ["Organizations", orgs.filter((o) => !o.ownerId).length, "/orgs"], ["Systems", nAssets, "/orgs"], ["Credentials", nCreds, "/orgs"],
     ["Certificates", nCerts, "/expirations"], ["Documents", nDocs, "/orgs"],
     ["Expiring within 60 days", expiring.length, "/expirations"],
   ];

@@ -1,14 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { ExternalLink, History, MonitorUp, Pencil, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, History, Link2, Pencil, Plus, Trash2 } from "lucide-react";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { deleteEntryAction } from "@/app/actions";
+import { deleteEntryAction, entryInfoAction } from "@/app/actions";
 import { can, requireOrg } from "@/lib/access";
-import { DEFAULT_PORTS, ENTITIES, isKind, optionLabel, type FieldDef } from "@/lib/entities";
+import { ENTITIES, isKind, optionLabel, type FieldDef } from "@/lib/entities";
 import { fmtDateTime } from "@/lib/format";
-import { getEntry, linkedEntries, type Entry } from "@/lib/store";
+import { getEntry, linkedEntries } from "@/lib/store";
+import { devicesUsing, linkedCredentials } from "@/lib/credentials";
+import { EntryActions } from "@/components/EntryActions";
 import { Markdown } from "@/components/Markdown";
 import { SecretReveal } from "@/components/SecretReveal";
 import { RecheckCert } from "@/components/RecheckCert";
@@ -20,17 +22,6 @@ import { ExpiryBadge, fmtDate } from "@/components/server";
 
 const EXPIRY_FIELDS = ["notAfter", "expiresAt", "warrantyExpires"];
 const isHttpUrl = (v: string) => /^https?:\/\/\S+$/i.test(v);
-
-function connectLink(orgId: string, entry: Entry) {
-  const protocol = String(entry.protocol ?? "none");
-  const host = String(entry.hostname || entry.ipAddress || "");
-  if (protocol === "none" || !host) return null;
-  const port = Number(entry.port) || DEFAULT_PORTS[protocol];
-  const label = `Connect (${protocol.toUpperCase()})`;
-  if (protocol === "rdp") return <a className="btn btn-primary" href={`/orgs/${orgId}/assets/${entry.id}/rdp`}><MonitorUp size={14} />{label}</a>;
-  const target = `${protocol}://${host}${port === DEFAULT_PORTS[protocol] ? "" : `:${port}`}`;
-  return <a className="btn btn-primary" href={target} target="_blank" rel="noreferrer noopener"><MonitorUp size={14} />{label}</a>;
-}
 
 export default async function EntryDetail({ params }: { params: Promise<{ orgId: string; kind: string; id: string }> }) {
   const { orgId, kind, id } = await params;
@@ -46,8 +37,11 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
   const folderPath = pathTo(await listFolders(orgId), (entry.folderId as string | null) ?? null);
   const linkedAsset = entry.assetId ? await getEntry("assets", orgId, String(entry.assetId)) : null;
   const [creds, certs] = kind === "assets"
-    ? await Promise.all([linkedEntries("credentials", orgId, id), linkedEntries("certificates", orgId, id)])
+    ? await Promise.all([linkedCredentials(id), linkedEntries("certificates", orgId, id)])
     : [[], []];
+  const usedBy = kind === "credentials" ? await devicesUsing(id) : [];
+  const info = kind === "assets" || kind === "credentials" ? await entryInfoAction(orgId, kind, id) : null;
+  const source = String(entry.credentialSource ?? "none");
 
   function value(f: FieldDef) {
     const v = entry![f.name] as string | number | null;
@@ -62,7 +56,7 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
     return <span className={f.mono ? "mono" : undefined}>{v}</span>;
   }
 
-  const body = def.fields.slice(1).filter((f) => !(kind === "documents" && f.name === "content"))
+  const body = def.fields.slice(1).filter((f) => !(kind === "documents" && f.name === "content") && f.name !== "credentialSource" && f.name !== "userVaultKey")
     .map((f) => ({ f, node: value(f) })).filter((x) => x.node !== null);
 
   return (
@@ -73,7 +67,6 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
           <h2 style={{ fontSize: 19 }} className="with-icon"><EntryIcon icon={entryIconKey(kind, entry)} size={19} />{entry.name}</h2>
         </div>
         <div className="actions">
-          {kind === "assets" ? connectLink(orgId, entry) : null}
           {canEdit ? <Link href={`${base}/edit`} className="btn"><Pencil size={14} />Edit</Link> : null}
           <Link href={`${base}/history`} className="btn"><History size={14} />History</Link>
           {can(level, "manager") ? (
@@ -83,6 +76,8 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
           ) : null}
         </div>
       </div>
+
+      {info && !("error" in info) ? <EntryActions target={{ orgId, kind, id, name: entry.name }} info={info} /> : null}
 
       {kind === "certificates" && canEdit && entry.host ? <RecheckCert orgId={orgId} id={id} /> : null}
 
@@ -102,30 +97,74 @@ export default async function EntryDetail({ params }: { params: Promise<{ orgId:
         </section>
       ) : null}
 
-      {kind === "assets" ? (["credentials", "certificates"] as const).map((k) => {
-        const rows = k === "credentials" ? creds : certs;
-        return (
-          <section className="card" key={k}>
-            <div className="card-head">
-              <h2>{ENTITIES[k].plural}</h2>
-              {canEdit ? <Link className="btn btn-sm" href={`/orgs/${orgId}/${k}/new?asset=${id}${entry.folderId ? `&folder=${entry.folderId}` : ""}`}><Plus size={14} />Add</Link> : null}
+      {kind === "assets" ? (
+        <section className="card">
+          <div className="card-head">
+            <h2>Credentials</h2>
+            {canEdit ? (
+              <div className="row">
+                <Link className="btn btn-sm" href={`${base}/edit#credentials`}><Link2 size={14} />Link or change</Link>
+                {source !== "user" ? <Link className="btn btn-sm" href={`/orgs/${orgId}/credentials/new?linkTo=${id}`}><Plus size={14} />New credential</Link> : null}
+              </div>
+            ) : null}
+          </div>
+          {source === "user" ? (
+            <div className="card-body">
+              <p>Each person uses their own credential named <strong>{String(entry.userVaultKey)}</strong> from their personal vault. Every use is logged under their name.</p>
+              <p className="muted small" style={{ marginTop: 6 }}>
+                {info && !("error" in info) && info.credentialName ? "You have a matching credential in your vault." : <>You do not have one yet. <Link href={`/vault/new-credential?name=${encodeURIComponent(String(entry.userVaultKey))}`}>Add it to your vault</Link>.</>}
+              </p>
             </div>
-            {rows.length ? (
-              <table><tbody>
-                {rows.map((r) => (
-                  <tr key={r.id}>
-                    <td className="primary"><Link href={`/orgs/${orgId}/${k}/${r.id}`}>{r.name}</Link></td>
-                    <td className="mono">{String((k === "credentials" ? r.username : r.host) ?? "")}</td>
-                    <td>{k === "credentials"
-                      ? (r.password ? <SecretReveal orgId={orgId} id={r.id} field="password" canReveal={canEdit} /> : null)
-                      : <ExpiryBadge date={r.notAfter as string | null} />}</td>
-                  </tr>
-                ))}
-              </tbody></table>
-            ) : <div className="card-body muted">No {ENTITIES[k].plural.toLowerCase()} linked to this system.</div>}
-          </section>
-        );
-      }) : null}
+          ) : source === "linked" && creds.length ? (
+            <table><tbody>
+              {creds.map((c, i) => (
+                <tr key={c.id}>
+                  <td className="primary"><Link href={`/orgs/${orgId}/credentials/${c.id}`} className="with-icon"><EntryIcon icon="credential" />{c.name}</Link></td>
+                  <td>{i === 0 ? <span className="badge badge-accent">Default</span> : null}</td>
+                  <td className="mono">{c.username ?? ""}</td>
+                  <td>{c.password ? <SecretReveal orgId={orgId} id={c.id} field="password" canReveal={canEdit} /> : null}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          ) : <div className="card-body muted">No credential is set for this device.{canEdit ? " Use Link or change to pick one." : ""}</div>}
+        </section>
+      ) : null}
+
+      {kind === "assets" ? (
+        <section className="card">
+          <div className="card-head">
+            <h2>Certificates</h2>
+            {canEdit ? <Link className="btn btn-sm" href={`/orgs/${orgId}/certificates/new?asset=${id}${entry.folderId ? `&folder=${entry.folderId}` : ""}`}><Plus size={14} />Add</Link> : null}
+          </div>
+          {certs.length ? (
+            <table><tbody>
+              {certs.map((r) => (
+                <tr key={r.id}>
+                  <td className="primary"><Link href={`/orgs/${orgId}/certificates/${r.id}`}>{r.name}</Link></td>
+                  <td className="mono">{String(r.host ?? "")}</td>
+                  <td><ExpiryBadge date={r.notAfter as string | null} /></td>
+                </tr>
+              ))}
+            </tbody></table>
+          ) : <div className="card-body muted">No certificates linked to this system.</div>}
+        </section>
+      ) : null}
+
+      {kind === "credentials" ? (
+        <section className="card">
+          <div className="card-head"><h2>Used by</h2><span className="muted small">Link credentials from a device&apos;s properties</span></div>
+          {usedBy.length ? (
+            <table><tbody>
+              {usedBy.map((d) => (
+                <tr key={d.id}>
+                  <td className="primary"><Link href={`/orgs/${orgId}/assets/${d.id}`} className="with-icon"><EntryIcon icon={d.type} />{d.name}</Link></td>
+                  <td className="mono">{d.hostname ?? ""}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          ) : <div className="card-body muted">No devices use this credential.</div>}
+        </section>
+      ) : null}
 
       <p className="muted small">Version {entry.version}. Last updated {fmtDateTime(entry.updatedAt)}{editor ? ` by ${editor.name}` : ""}.</p>
     </div>

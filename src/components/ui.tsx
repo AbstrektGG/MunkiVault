@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Check, Copy } from "lucide-react";
 import type { FormState } from "@/app/actions";
+import { copyText } from "@/lib/clipboard";
 
 const PendingContext = createContext(false);
 
@@ -55,7 +56,7 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
   const [done, setDone] = useState(false);
   return (
     <button type="button" className="btn btn-sm" onClick={async () => {
-      await navigator.clipboard.writeText(value);
+      if (!(await copyText(value))) return;
       setDone(true);
       setTimeout(() => setDone(false), 1500);
     }}>

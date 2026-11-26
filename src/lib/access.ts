@@ -1,6 +1,6 @@
 import "server-only";
 import { notFound } from "next/navigation";
-import { and, eq, asc, inArray } from "drizzle-orm";
+import { and, eq, asc, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, orgAccess, organizations } from "@/db/schema";
 import { clientIp, requireUser, type User } from "./auth";
@@ -13,10 +13,12 @@ export const isUuid = (value: unknown): value is string => typeof value === "str
 
 export const can = (level: Level, min: Level) => LEVELS.indexOf(level) >= LEVELS.indexOf(min);
 
-export async function levelFor(user: User, orgId: string): Promise<Level | null> {
+// A personal vault belongs to one user only; nobody else, administrators included, can open it.
+export async function levelFor(user: User, org: Pick<Org, "id" | "ownerId">): Promise<Level | null> {
+  if (org.ownerId) return org.ownerId === user.id ? "manager" : null;
   if (user.role === "admin") return "manager";
   const [row] = await db.select().from(orgAccess)
-    .where(and(eq(orgAccess.userId, user.id), eq(orgAccess.orgId, orgId))).limit(1);
+    .where(and(eq(orgAccess.userId, user.id), eq(orgAccess.orgId, org.id))).limit(1);
   return (row?.level as Level | undefined) ?? null;
 }
 
@@ -27,19 +29,23 @@ export async function requireOrg(orgId: string, min: Level = "viewer") {
   if (!isUuid(orgId)) notFound();
   const [org] = await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1);
   if (!org) notFound();
-  const level = await levelFor(user, orgId);
+  const level = await levelFor(user, org);
   if (!level) notFound();
   if (!can(level, min)) throw new Error("You do not have permission to do that in this organization.");
   return { user, org, level };
 }
 
 export async function accessibleOrgs(user: User): Promise<Org[]> {
-  if (user.role === "admin") return db.select().from(organizations).orderBy(asc(organizations.name));
+  const own = eq(organizations.ownerId, user.id);
+  if (user.role === "admin") {
+    return db.select().from(organizations).where(or(isNull(organizations.ownerId), own)).orderBy(asc(organizations.name));
+  }
   const rows = await db.select({ id: orgAccess.orgId }).from(orgAccess).where(eq(orgAccess.userId, user.id));
-  if (!rows.length) return [];
-  return db.select().from(organizations)
-    .where(inArray(organizations.id, rows.map((r) => r.id))).orderBy(asc(organizations.name));
+  const granted = rows.length ? and(isNull(organizations.ownerId), inArray(organizations.id, rows.map((r) => r.id))) : undefined;
+  return db.select().from(organizations).where(granted ? or(granted, own) : own).orderBy(asc(organizations.name));
 }
+
+export const isPersonal = (org: Pick<Org, "ownerId">) => Boolean(org.ownerId);
 
 export async function audit(user: Pick<User, "id" | "email"> | null, action: string, opts: {
   orgId?: string | null; entityType?: string; entityId?: string; detail?: string; actor?: string;
@@ -54,4 +60,15 @@ export async function audit(user: Pick<User, "id" | "email"> | null, action: str
     detail: opts.detail?.slice(0, 500),
     ip: await clientIp(),
   });
+}
+
+export async function levelsFor(user: User, orgs: Org[]): Promise<Record<string, Level>> {
+  const grants = user.role === "admin" ? [] : await db.select().from(orgAccess).where(eq(orgAccess.userId, user.id));
+  const granted = new Map(grants.map((g) => [g.orgId, g.level as Level]));
+  const out: Record<string, Level> = {};
+  for (const o of orgs) {
+    const level = o.ownerId ? (o.ownerId === user.id ? "manager" : null) : user.role === "admin" ? "manager" : granted.get(o.id) ?? null;
+    if (level) out[o.id] = level;
+  }
+  return out;
 }

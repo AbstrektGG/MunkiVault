@@ -15,7 +15,9 @@ import { ENTITIES, LEVELS, isKind, type Kind, type Level } from "@/lib/entities"
 import { createEntry, deleteEntry, getEntry, parseForm, restoreRevision, updateEntry } from "@/lib/store";
 import { fetchCertificate, type FetchedCert } from "@/lib/certs";
 import { deleteFolder, descendantIds, getFolder, listFolders, loadTree, moveEntry, resolveFolder, type OrgTree } from "@/lib/folders";
-import { FOLDER_ICONS } from "@/lib/entities";
+import { FOLDER_ICONS, DEFAULT_PORTS } from "@/lib/entities";
+import { appendLink, resolveCredential, setLinkedCredentials } from "@/lib/credentials";
+import { snapshotOf } from "@/lib/store";
 
 export type FormState = { error?: string; ok?: string } | null;
 
@@ -102,7 +104,8 @@ export async function saveOrgAction(orgId: string | null, _prev: FormState, form
   if (!name || name.length > 200) return { error: "Enter a name (up to 200 characters)." };
   let id = orgId;
   if (orgId) {
-    const { user } = await requireOrg(orgId, "manager");
+    const { user, org } = await requireOrg(orgId, "manager");
+    if (org.ownerId) return { error: "Personal vaults cannot be renamed." };
     await db.update(organizations).set({ name, kind, description, updatedAt: new Date() }).where(eq(organizations.id, orgId));
     await audit(user, "org.updated", { orgId, detail: name });
     revalidatePath("/", "layout");
@@ -119,6 +122,7 @@ export async function saveOrgAction(orgId: string | null, _prev: FormState, form
 export async function deleteOrgAction(orgId: string, _prev: FormState, form: FormData): Promise<FormState> {
   const user = await requireAdmin();
   const { org } = await requireOrg(orgId, "manager");
+  if (org.ownerId) return { error: "Personal vaults cannot be deleted." };
   if (str(form, "confirm") !== org.name) return { error: "Type the organization name exactly to confirm." };
   await db.delete(organizations).where(eq(organizations.id, orgId));
   await audit(user, "org.deleted", { detail: org.name });
@@ -127,7 +131,8 @@ export async function deleteOrgAction(orgId: string, _prev: FormState, form: For
 }
 
 export async function setAccessAction(orgId: string, _prev: FormState, form: FormData): Promise<FormState> {
-  const { user } = await requireOrg(orgId, "manager");
+  const { user, org } = await requireOrg(orgId, "manager");
+  if (org.ownerId) return { error: "Personal vaults cannot be shared." };
   const userId = str(form, "userId");
   const level = str(form, "level");
   if (!isUuid(userId)) return { error: "Choose a user." };
@@ -150,6 +155,7 @@ export async function setAccessAction(orgId: string, _prev: FormState, form: For
 export async function saveEntryAction(kindRaw: string, orgId: string, id: string | null, _prev: FormState, form: FormData): Promise<FormState> {
   const kind = kindOrThrow(kindRaw);
   let target: string;
+  let dest: string | null = null;
   try {
     const { user } = await requireOrg(orgId, "editor");
     if (id) {
@@ -168,18 +174,41 @@ export async function saveEntryAction(kindRaw: string, orgId: string, id: string
         await moveEntry(kind, id, folderId);
         await audit(user, `${kind}.moved`, { orgId, entityType: kind, entityId: id, detail: String(values.name) });
       }
+      if (kind === "assets") await saveLinks(user, orgId, id, String(values.name), values.credentialSource === "linked" ? form.getAll("credentialIds").map(String) : []);
       target = id;
     } else {
       const values = await parseForm(kind, orgId, form, null);
       const folderId = await resolveFolder(orgId, form.get("folderId"));
       target = await createEntry(kind, orgId, values, user.id, folderId);
+      if (kind === "assets" && values.credentialSource === "linked") {
+        await saveLinks(user, orgId, target, String(values.name), form.getAll("credentialIds").map(String));
+      }
+      // "New credential" started from a device links the new credential to that device.
+      const linkTo = str(form, "linkTo");
+      if (kind === "credentials" && linkTo) {
+        const device = await getEntry("assets", orgId, linkTo);
+        if (device) {
+          await appendLink(device.id, target);
+          if (device.credentialSource !== "linked") {
+            await updateEntry("assets", device, { ...snapshotOf("assets", device), credentialSource: "linked", userVaultKey: null }, user.id);
+          }
+          await audit(user, "assets.credentials_linked", { orgId, entityType: "assets", entityId: device.id, detail: `${device.name}: ${values.name}` });
+          dest = `/orgs/${orgId}/assets/${device.id}`;
+        }
+      }
       await audit(user, `${kind}.created`, { orgId, entityType: kind, entityId: target, detail: String(values.name) });
     }
   } catch (err) {
     if (isRedirect(err)) throw err;
     return { error: message(err) };
   }
-  redirect(`/orgs/${orgId}/${kind}/${target}`);
+  redirect(dest ?? `/orgs/${orgId}/${kind}/${target}`);
+}
+
+async function saveLinks(user: { id: string; email: string }, orgId: string, assetId: string, name: string, ids: string[]) {
+  if (await setLinkedCredentials({ id: assetId, orgId }, ids)) {
+    await audit(user, "assets.credentials_linked", { orgId, entityType: "assets", entityId: assetId, detail: `${name}: ${ids.length} linked` });
+  }
 }
 
 // redirect() and notFound() signal through thrown errors that must not be swallowed.
@@ -211,24 +240,71 @@ export async function restoreAction(kindRaw: string, orgId: string, id: string, 
   redirect(`/orgs/${orgId}/${kind}/${id}`);
 }
 
-export async function revealSecretAction(orgId: string, id: string, field: "password" | "totp"): Promise<{ value?: string; remaining?: number; error?: string }> {
+export type EntryInfo = {
+  credentialName?: string; source: "direct" | "linked" | "user" | "none"; problem?: string;
+  username?: string; hasPassword: boolean; hasTotp: boolean; canReveal: boolean;
+  hostname?: string; connect?: { protocol: string; href: string };
+};
+
+// What the right-click menu and the item header can offer. Contains no secrets.
+export async function entryInfoAction(orgId: string, kindRaw: string, id: string): Promise<EntryInfo | { error: string }> {
   try {
-    const { user } = await requireOrg(orgId, "editor");
-    const entry = await getEntry("credentials", orgId, id);
-    const stored = field === "password" ? entry?.password : field === "totp" ? entry?.totp : null;
-    if (!entry || typeof stored !== "string") return { error: "Nothing is stored for this field." };
-    const plain = decryptSecret(stored);
-    if (field === "totp") {
-      const { code, remaining } = totp(plain);
-      await audit(user, "credentials.totp_generated", { orgId, entityType: "credentials", entityId: id, detail: entry.name });
-      return { value: code, remaining };
+    const kind = kindOrThrow(kindRaw);
+    const { user, level } = await requireOrg(orgId);
+    const entry = await getEntry(kind, orgId, id);
+    if (!entry) return { error: "This item no longer exists." };
+    const r = await resolveCredential(user, kind, entry);
+    const info: EntryInfo = {
+      source: r.source, problem: r.problem, credentialName: r.credential?.name,
+      username: r.credential?.username ?? undefined, hasPassword: Boolean(r.credential?.password), hasTotp: Boolean(r.credential?.totp),
+      // A personal vault credential is the user's own; shared credentials need editor access to reveal.
+      canReveal: r.source === "user" || level === "editor" || level === "manager",
+    };
+    if (kind === "assets") {
+      const host = String(entry.hostname || entry.ipAddress || "");
+      const protocol = String(entry.protocol ?? "none");
+      info.hostname = host || undefined;
+      if (host && protocol !== "none") {
+        const port = Number(entry.port) || DEFAULT_PORTS[protocol];
+        info.connect = { protocol, href: protocol === "rdp" ? `/orgs/${orgId}/assets/${id}/rdp` : `${protocol}://${host}${port === DEFAULT_PORTS[protocol] ? "" : `:${port}`}` };
+      }
     }
-    await audit(user, "credentials.revealed", { orgId, entityType: "credentials", entityId: id, detail: entry.name });
+    return info;
+  } catch (err) {
+    if (isRedirect(err)) throw err;
+    return { error: message(err) };
+  }
+}
+
+export async function revealForEntryAction(orgId: string, kindRaw: string, id: string, field: "password" | "totp", purpose: "view" | "copy" = "view"): Promise<{ value?: string; remaining?: number; error?: string }> {
+  try {
+    const kind = kindOrThrow(kindRaw);
+    const { user, level } = await requireOrg(orgId);
+    const entry = await getEntry(kind, orgId, id);
+    if (!entry) return { error: "This item no longer exists." };
+    const r = await resolveCredential(user, kind, entry);
+    if (!r.credential) return { error: r.problem ?? "No credential is available." };
+    if (r.source !== "user" && level !== "editor" && level !== "manager") {
+      return { error: "You do not have permission to reveal secrets in this organization." };
+    }
+    const stored = field === "password" ? r.credential.password : r.credential.totp;
+    if (!stored) return { error: field === "password" ? "No password is stored." : "No one-time code is set up." };
+    const plain = decryptSecret(stored);
+    const verb = field === "totp" ? "totp_generated" : purpose === "copy" ? "copied" : "revealed";
+    const device = kind === "assets" ? `${entry.name}: ` : "";
+    const via = r.source === "user" ? " (from their personal vault)" : "";
+    // Logged against the organization being worked on, so its activity shows who used which credential on which device.
+    await audit(user, `credentials.${verb}`, { orgId, entityType: kind, entityId: id, detail: `${device}${r.credential.name}${via}` });
+    if (field === "totp") { const { code, remaining } = totp(plain); return { value: code, remaining }; }
     return { value: plain };
   } catch (err) {
     if (isRedirect(err)) throw err;
     return { error: message(err) };
   }
+}
+
+export async function revealSecretAction(orgId: string, id: string, field: "password" | "totp") {
+  return revealForEntryAction(orgId, "credentials", id, field);
 }
 
 export async function fetchCertAction(orgId: string, host: string, port: number): Promise<{ cert?: FetchedCert; error?: string }> {

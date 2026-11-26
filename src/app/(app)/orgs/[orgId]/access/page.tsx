@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { orgAccess, users } from "@/db/schema";
@@ -8,7 +9,8 @@ import { ActionForm, Submit } from "@/components/ui";
 
 export default async function AccessPage({ params }: { params: Promise<{ orgId: string }> }) {
   const { orgId } = await params;
-  await requireOrg(orgId, "manager");
+  const { org } = await requireOrg(orgId, "manager");
+  if (org.ownerId) notFound();
   const [all, grants] = await Promise.all([
     db.select().from(users).where(eq(users.disabled, false)).orderBy(asc(users.name)),
     db.select().from(orgAccess).where(eq(orgAccess.orgId, orgId)),

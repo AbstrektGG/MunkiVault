@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { deleteOrgAction } from "@/app/actions";
 import { requireOrg } from "@/lib/access";
 import { OrgForm } from "@/components/OrgForm";
@@ -6,6 +7,7 @@ import { ActionForm, Submit } from "@/components/ui";
 export default async function OrgSettings({ params }: { params: Promise<{ orgId: string }> }) {
   const { orgId } = await params;
   const { org, user } = await requireOrg(orgId, "manager");
+  if (org.ownerId) notFound();
   return (
     <div className="stack" style={{ maxWidth: 720 }}>
       <OrgForm org={org} cancelHref={`/orgs/${orgId}`} />

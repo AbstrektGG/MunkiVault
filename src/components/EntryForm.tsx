@@ -2,9 +2,9 @@
 
 import { Fragment, startTransition, useActionState, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, Wand2 } from "lucide-react";
+import { ArrowUp, Download, KeyRound, Wand2, X } from "lucide-react";
 import { fetchCertAction, saveEntryAction } from "@/app/actions";
-import { ENTITIES, type FieldDef, type Kind } from "@/lib/entities";
+import { CREDENTIAL_SOURCES, ENTITIES, type FieldDef, type Kind } from "@/lib/entities";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { PasswordGenerator } from "./PasswordGenerator";
 import { Message } from "./ui";
@@ -18,9 +18,63 @@ type Props = {
   folders: { id: string; label: string }[];
   folderId: string | null;
   cancelHref: string;
+  // Devices only: credentials in this vault that can be linked, and the ones linked now (default first).
+  credentialOptions?: { id: string; label: string }[];
+  linkedIds?: string[];
+  // Credentials only: a device to link the new credential to once it is created.
+  linkTo?: string | null;
 };
 
-export function EntryForm({ kind, orgId, id, version, values, stored, assets, folders, folderId, cancelHref }: Props) {
+function CredentialSource({ initialSource, vaultKey, options, initialLinked }: {
+  initialSource: string; vaultKey: string; options: { id: string; label: string }[]; initialLinked: string[];
+}) {
+  const [source, setSource] = useState(initialSource || "none");
+  const [linked, setLinked] = useState(initialLinked.filter((id) => options.some((o) => o.id === id)));
+  const label = (id: string) => options.find((o) => o.id === id)?.label ?? "Unknown";
+  const move = (i: number) => setLinked((l) => { const n = [...l]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; return n; });
+  return (
+    <fieldset className="cred-source" id="credentials">
+      <legend>Credentials</legend>
+      <div className="radio-row">
+        {CREDENTIAL_SOURCES.map(([v, l]) => (
+          <label key={v} className="check"><input type="radio" name="credentialSource" value={v} checked={source === v} onChange={() => setSource(v)} />{l}</label>
+        ))}
+      </div>
+      {source === "linked" ? (
+        <div className="stack" style={{ gap: 8, marginTop: 10 }}>
+          {linked.length ? (
+            <ul className="link-list">
+              {linked.map((id, i) => (
+                <li key={id}>
+                  <input type="hidden" name="credentialIds" value={id} />
+                  <KeyRound size={14} className="ico ico-key" aria-hidden />
+                  <span className="grow">{label(id)}</span>
+                  {i === 0 ? <span className="badge badge-accent">Default</span>
+                    : <button type="button" className="btn btn-ghost btn-sm" onClick={() => move(i)} title="Move up"><ArrowUp size={13} />Make earlier</button>}
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setLinked(linked.filter((x) => x !== id))} aria-label={`Unlink ${label(id)}`}><X size={13} />Unlink</button>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="help">No credentials linked yet.</p>}
+          <select aria-label="Link a credential" value="" onChange={(e) => { if (e.target.value) setLinked([...linked, e.target.value]); }}>
+            <option value="">{options.length ? "Link a credential from this vault..." : "This vault has no credentials yet"}</option>
+            {options.filter((o) => !linked.includes(o.id)).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+          <p className="help">The first credential is used for Connect and the copy actions. The same credential can be linked to any number of devices.</p>
+        </div>
+      ) : null}
+      {source === "user" ? (
+        <div style={{ marginTop: 10 }}>
+          <label htmlFor="userVaultKey">Credential name in each user&apos;s personal vault *</label>
+          <input id="userVaultKey" name="userVaultKey" type="text" defaultValue={vaultKey} required placeholder="Contoso domain" />
+          <p className="help">Each person uses the credential with this exact name from their own vault, so every use is logged under their name.</p>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+export function EntryForm({ kind, orgId, id, version, values, stored, assets, folders, folderId, cancelHref, credentialOptions = [], linkedIds = [], linkTo }: Props) {
   const def = ENTITIES[kind];
   const [state, action, pending] = useActionState(saveEntryAction.bind(null, kind, orgId, id), null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -105,8 +159,14 @@ export function EntryForm({ kind, orgId, id, version, values, stored, assets, fo
       startTransition(() => action(data));
     }}>
       <input type="hidden" name="version" value={version} />
+      {linkTo ? <input type="hidden" name="linkTo" value={linkTo} /> : null}
       <div className="form-grid">
-        {def.fields.map((f, i) => (
+        {def.fields.map((f, i) => f.name === "userVaultKey" ? null : f.name === "credentialSource" ? (
+          <div key={f.name} className="wide">
+            <CredentialSource initialSource={String(values.credentialSource ?? "none")} vaultKey={String(values.userVaultKey ?? "")}
+              options={credentialOptions} initialLinked={linkedIds} />
+          </div>
+        ) : (
           <Fragment key={f.name}>
             <div className={f.wide ? "wide" : undefined}>
               <label htmlFor={f.name}>{f.label}{f.required ? " *" : ""}</label>

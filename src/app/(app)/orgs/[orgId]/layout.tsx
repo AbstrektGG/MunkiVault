@@ -13,14 +13,16 @@ export default async function OrgLayout({ children, params }: { children: ReactN
   return (
     <>
       <PageHead
-        crumbs={[["Organizations", "/orgs"]]}
-        title={<>{org.name} <span className={`badge ${org.kind === "internal" ? "badge-accent" : ""}`} style={{ verticalAlign: "middle" }}>{org.kind === "internal" ? "Internal" : "Customer"}</span></>}
+        crumbs={org.ownerId ? [] : [["Organizations", "/orgs"]]}
+        title={org.ownerId
+          ? <>My vault <span className="badge badge-accent" style={{ verticalAlign: "middle" }}>Private</span></>
+          : <>{org.name} <span className={`badge ${org.kind === "internal" ? "badge-accent" : ""}`} style={{ verticalAlign: "middle" }}>{org.kind === "internal" ? "Internal" : "Customer"}</span></>}
       />
       <nav className="tabs" aria-label="Organization">
         <NavLink href={base} exact>Overview</NavLink>
         {KINDS.map((k) => <NavLink key={k} href={`${base}/${k}`}>{ENTITIES[k].plural}<span className="count">{counts[k]}</span></NavLink>)}
         <NavLink href={`${base}/activity`}>Activity</NavLink>
-        {can(level, "manager") ? <><NavLink href={`${base}/access`}>Access</NavLink><NavLink href={`${base}/settings`}>Settings</NavLink></> : null}
+        {can(level, "manager") && !org.ownerId ? <><NavLink href={`${base}/access`}>Access</NavLink><NavLink href={`${base}/settings`}>Settings</NavLink></> : null}
       </nav>
       {children}
     </>
