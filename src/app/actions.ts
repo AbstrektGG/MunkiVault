@@ -1,0 +1,296 @@
+"use server";
+
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { and, eq, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { orgAccess, organizations, users } from "@/db/schema";
+import {
+  clearLoginFailures, clientIp, createSession, destroySession, destroyUserSessions, hasAnyUser, loginBlocked,
+  passwordProblem, recordLoginFailure, requireAdmin, requireUser,
+} from "@/lib/auth";
+import { audit, isUuid, requireOrg } from "@/lib/access";
+import { decryptSecret, hashPassword, totp, verifyPassword } from "@/lib/crypto";
+import { ENTITIES, LEVELS, isKind, type Kind, type Level } from "@/lib/entities";
+import { createEntry, deleteEntry, getEntry, parseForm, restoreRevision, updateEntry } from "@/lib/store";
+import { fetchCertificate, type FetchedCert } from "@/lib/certs";
+
+export type FormState = { error?: string; ok?: string } | null;
+
+const str = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
+const message = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong.");
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+function kindOrThrow(kind: string): Kind {
+  if (!isKind(kind)) throw new Error("Unknown entry type.");
+  return kind;
+}
+
+// ---------- Authentication ----------
+
+export async function setupAction(_prev: FormState, form: FormData): Promise<FormState> {
+  if (await hasAnyUser()) redirect("/login");
+  const email = str(form, "email").toLowerCase();
+  const name = str(form, "name");
+  const password = String(form.get("password") ?? "");
+  if (!name || !EMAIL.test(email)) return { error: "Enter your name and a valid email address." };
+  const problem = passwordProblem(password);
+  if (problem) return { error: problem };
+  const passwordHash = await hashPassword(password);
+  // The guard is repeated inside the insert so two concurrent setups cannot both create an admin.
+  const created = await db.execute<{ id: string }>(sql`
+    insert into users (email, name, password_hash, role)
+    select ${email}, ${name}, ${passwordHash}, 'admin' where not exists (select 1 from users)
+    returning id`);
+  const id = created[0]?.id;
+  if (!id) redirect("/login");
+  await audit({ id, email }, "user.setup");
+  await createSession(id);
+  redirect("/");
+}
+
+export async function loginAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const email = str(form, "email").toLowerCase();
+  const password = String(form.get("password") ?? "");
+  const key = `${email}|${(await clientIp()) ?? ""}`;
+  if (loginBlocked(key)) return { error: "Too many failed attempts. Try again in 15 minutes." };
+  const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  // Always run a hash comparison so response time does not reveal whether the account exists.
+  const ok = await verifyPassword(password, user?.passwordHash ?? "scrypt$32768$8$3$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
+  if (!user || !ok || user.disabled) {
+    recordLoginFailure(key);
+    await audit(user ?? null, "login.failed", { actor: email });
+    return { error: "Incorrect email or password." };
+  }
+  clearLoginFailures(key);
+  await createSession(user.id);
+  await audit(user, "login");
+  redirect("/");
+}
+
+export async function logoutAction() {
+  const user = await requireUser();
+  await audit(user, "logout");
+  await destroySession();
+  redirect("/login");
+}
+
+export async function changePasswordAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const user = await requireUser();
+  const next = String(form.get("next") ?? "");
+  if (user.passwordHash && !(await verifyPassword(String(form.get("current") ?? ""), user.passwordHash))) {
+    return { error: "Your current password is incorrect." };
+  }
+  const problem = passwordProblem(next);
+  if (problem) return { error: problem };
+  if (next !== String(form.get("confirm") ?? "")) return { error: "The new passwords do not match." };
+  await db.update(users).set({ passwordHash: await hashPassword(next) }).where(eq(users.id, user.id));
+  await destroyUserSessions(user.id);
+  await createSession(user.id);
+  await audit(user, "user.password_changed");
+  return { ok: "Password updated. Other sessions were signed out." };
+}
+
+// ---------- Organizations ----------
+
+export async function saveOrgAction(orgId: string | null, _prev: FormState, form: FormData): Promise<FormState> {
+  const name = str(form, "name");
+  const kind = str(form, "kind") === "internal" ? "internal" : "customer";
+  const description = str(form, "description") || null;
+  if (!name || name.length > 200) return { error: "Enter a name (up to 200 characters)." };
+  let id = orgId;
+  if (orgId) {
+    const { user } = await requireOrg(orgId, "manager");
+    await db.update(organizations).set({ name, kind, description, updatedAt: new Date() }).where(eq(organizations.id, orgId));
+    await audit(user, "org.updated", { orgId, detail: name });
+  } else {
+    const user = await requireAdmin();
+    const [row] = await db.insert(organizations).values({ name, kind, description }).returning({ id: organizations.id });
+    id = row.id;
+    await audit(user, "org.created", { orgId: id, detail: name });
+  }
+  redirect(`/orgs/${id}`);
+}
+
+export async function deleteOrgAction(orgId: string, _prev: FormState, form: FormData): Promise<FormState> {
+  const user = await requireAdmin();
+  const { org } = await requireOrg(orgId, "manager");
+  if (str(form, "confirm") !== org.name) return { error: "Type the organization name exactly to confirm." };
+  await db.delete(organizations).where(eq(organizations.id, orgId));
+  await audit(user, "org.deleted", { detail: org.name });
+  redirect("/orgs");
+}
+
+export async function setAccessAction(orgId: string, _prev: FormState, form: FormData): Promise<FormState> {
+  const { user } = await requireOrg(orgId, "manager");
+  const userId = str(form, "userId");
+  const level = str(form, "level");
+  if (!isUuid(userId)) return { error: "Choose a user." };
+  const [target] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!target) return { error: "That user no longer exists." };
+  if (level === "none") {
+    await db.delete(orgAccess).where(and(eq(orgAccess.orgId, orgId), eq(orgAccess.userId, userId)));
+  } else {
+    if (!(LEVELS as readonly string[]).includes(level)) return { error: "Unknown access level." };
+    await db.insert(orgAccess).values({ orgId, userId, level })
+      .onConflictDoUpdate({ target: [orgAccess.userId, orgAccess.orgId], set: { level } });
+  }
+  await audit(user, "access.changed", { orgId, detail: `${target.email}: ${level}` });
+  revalidatePath(`/orgs/${orgId}/access`);
+  return { ok: `Access updated for ${target.name}.` };
+}
+
+// ---------- Vault entries ----------
+
+export async function saveEntryAction(kindRaw: string, orgId: string, id: string | null, _prev: FormState, form: FormData): Promise<FormState> {
+  const kind = kindOrThrow(kindRaw);
+  let target: string;
+  try {
+    const { user } = await requireOrg(orgId, "editor");
+    if (id) {
+      const existing = await getEntry(kind, orgId, id);
+      if (!existing) return { error: "This entry no longer exists." };
+      if (Number(form.get("version")) !== existing.version) {
+        return { error: "Someone else saved this entry while you were editing. Reload to see their changes." };
+      }
+      const values = await parseForm(kind, orgId, form, existing);
+      if (await updateEntry(kind, existing, values, user.id)) {
+        await audit(user, `${kind}.updated`, { orgId, entityType: kind, entityId: id, detail: String(values.name) });
+      }
+      target = id;
+    } else {
+      const values = await parseForm(kind, orgId, form, null);
+      target = await createEntry(kind, orgId, values, user.id);
+      await audit(user, `${kind}.created`, { orgId, entityType: kind, entityId: target, detail: String(values.name) });
+    }
+  } catch (err) {
+    if (isRedirect(err)) throw err;
+    return { error: message(err) };
+  }
+  redirect(`/orgs/${orgId}/${kind}/${target}`);
+}
+
+// redirect() and notFound() signal through thrown errors that must not be swallowed.
+function isRedirect(err: unknown) {
+  const digest = (err as { digest?: unknown })?.digest;
+  return typeof digest === "string" && (digest.startsWith("NEXT_REDIRECT") || digest.includes("NOT_FOUND") || digest.startsWith("NEXT_HTTP_ERROR"));
+}
+
+export async function deleteEntryAction(kindRaw: string, orgId: string, id: string) {
+  const kind = kindOrThrow(kindRaw);
+  const { user } = await requireOrg(orgId, "manager");
+  const existing = await getEntry(kind, orgId, id);
+  if (existing) {
+    await deleteEntry(kind, existing, user.id);
+    await audit(user, `${kind}.deleted`, { orgId, entityType: kind, entityId: id, detail: existing.name });
+  }
+  redirect(`/orgs/${orgId}/${kind}`);
+}
+
+export async function restoreAction(kindRaw: string, orgId: string, id: string, version: number) {
+  const kind = kindOrThrow(kindRaw);
+  const { user } = await requireOrg(orgId, "editor");
+  const existing = await getEntry(kind, orgId, id);
+  if (!existing) redirect(`/orgs/${orgId}/${kind}`);
+  if (await restoreRevision(kind, existing, version, user.id)) {
+    await audit(user, `${kind}.restored`, { orgId, entityType: kind, entityId: id, detail: `${existing.name}: version ${version}` });
+  }
+  redirect(`/orgs/${orgId}/${kind}/${id}`);
+}
+
+export async function revealSecretAction(orgId: string, id: string, field: "password" | "totp"): Promise<{ value?: string; remaining?: number; error?: string }> {
+  try {
+    const { user } = await requireOrg(orgId, "editor");
+    const entry = await getEntry("credentials", orgId, id);
+    const stored = field === "password" ? entry?.password : field === "totp" ? entry?.totp : null;
+    if (!entry || typeof stored !== "string") return { error: "Nothing is stored for this field." };
+    const plain = decryptSecret(stored);
+    if (field === "totp") {
+      const { code, remaining } = totp(plain);
+      await audit(user, "credentials.totp_generated", { orgId, entityType: "credentials", entityId: id, detail: entry.name });
+      return { value: code, remaining };
+    }
+    await audit(user, "credentials.revealed", { orgId, entityType: "credentials", entityId: id, detail: entry.name });
+    return { value: plain };
+  } catch (err) {
+    if (isRedirect(err)) throw err;
+    return { error: message(err) };
+  }
+}
+
+export async function fetchCertAction(orgId: string, host: string, port: number): Promise<{ cert?: FetchedCert; error?: string }> {
+  try {
+    await requireOrg(orgId, "editor");
+    return { cert: await fetchCertificate(host.trim(), port || 443) };
+  } catch (err) {
+    if (isRedirect(err)) throw err;
+    return { error: message(err) };
+  }
+}
+
+export async function recheckCertAction(orgId: string, id: string, _prev: FormState): Promise<FormState> {
+  try {
+    const { user } = await requireOrg(orgId, "editor");
+    const existing = await getEntry("certificates", orgId, id);
+    if (!existing) return { error: "This certificate no longer exists." };
+    if (!existing.host) return { error: "Add a host to this certificate first." };
+    const cert = await fetchCertificate(String(existing.host), Number(existing.port) || 443);
+    const values = Object.fromEntries(ENTITIES.certificates.fields.map((f) => [f.name, (existing[f.name] as string | number | null) ?? null]));
+    const changed = await updateEntry("certificates", existing, { ...values, ...cert }, user.id);
+    if (changed) await audit(user, "certificates.updated", { orgId, entityType: "certificates", entityId: id, detail: `${existing.name}: refreshed from host` });
+    revalidatePath(`/orgs/${orgId}/certificates/${id}`);
+    return { ok: changed ? `Updated from ${existing.host}. Now expires ${cert.notAfter}.` : "The host still presents the same certificate." };
+  } catch (err) {
+    if (isRedirect(err)) throw err;
+    return { error: message(err) };
+  }
+}
+
+// ---------- User administration ----------
+
+export async function createUserAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const admin = await requireAdmin();
+  const email = str(form, "email").toLowerCase();
+  const name = str(form, "name");
+  const password = String(form.get("password") ?? "");
+  const role = str(form, "role") === "admin" ? "admin" : "member";
+  if (!name || !EMAIL.test(email)) return { error: "Enter a name and a valid email address." };
+  // An empty password creates an SSO-only account.
+  if (password) {
+    const problem = passwordProblem(password);
+    if (problem) return { error: problem };
+  }
+  const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  if (existing) return { error: "A user with that email already exists." };
+  await db.insert(users).values({ email, name, role, passwordHash: password ? await hashPassword(password) : null });
+  await audit(admin, "user.created", { detail: `${email} (${role})` });
+  revalidatePath("/admin/users");
+  return { ok: `${name} was added.` };
+}
+
+export async function updateUserAction(userId: string, _prev: FormState, form: FormData): Promise<FormState> {
+  const admin = await requireAdmin();
+  if (!isUuid(userId)) return { error: "Unknown user." };
+  const [target] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!target) return { error: "Unknown user." };
+  const role = str(form, "role") === "admin" ? "admin" : "member";
+  const disabled = form.get("disabled") === "on";
+  const password = String(form.get("password") ?? "");
+  const ssoOnly = form.get("ssoOnly") === "on";
+  if (target.id === admin.id && (role !== "admin" || disabled || ssoOnly)) {
+    return { error: "You cannot remove your own administrator access, password or account." };
+  }
+  const patch: Partial<typeof users.$inferInsert> = { role, disabled };
+  if (ssoOnly) {
+    patch.passwordHash = null;
+  } else if (password) {
+    const problem = passwordProblem(password);
+    if (problem) return { error: problem };
+    patch.passwordHash = await hashPassword(password);
+  }
+  await db.update(users).set(patch).where(eq(users.id, userId));
+  if (disabled || password || ssoOnly) await destroyUserSessions(userId);
+  await audit(admin, "user.updated", { detail: `${target.email}: role ${role}${disabled ? ", disabled" : ""}${ssoOnly ? ", password removed" : password ? ", password reset" : ""}` });
+  revalidatePath("/admin/users");
+  return { ok: "Saved." };
+}

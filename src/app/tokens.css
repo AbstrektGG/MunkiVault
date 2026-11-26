@@ -1,0 +1,62 @@
+/*
+ * MunkiVault design tokens.
+ * Every colour, radius, font and shadow in the app is read from the variables below, so this is
+ * the only file to edit when applying the MunkiVault design system values.
+ */
+:root {
+  --mv-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mv-font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  --mv-bg: #f5f6f4;
+  --mv-surface: #ffffff;
+  --mv-surface-2: #eef0ec;
+  --mv-border: #dcdfd8;
+  --mv-border-strong: #b9beb3;
+  --mv-text: #171a16;
+  --mv-text-muted: #5b6257;
+
+  --mv-accent: #1f6b4f;
+  --mv-accent-hover: #17543d;
+  --mv-accent-contrast: #ffffff;
+  --mv-accent-soft: #e0efe8;
+
+  --mv-danger: #b3261e;
+  --mv-danger-soft: #fbe6e4;
+  --mv-warning: #8a5a00;
+  --mv-warning-soft: #fbeed3;
+  --mv-success: #1f6b4f;
+  --mv-success-soft: #e0efe8;
+
+  --mv-radius-sm: 4px;
+  --mv-radius-md: 7px;
+  --mv-radius-lg: 10px;
+  --mv-shadow: 0 1px 2px rgba(20, 24, 18, 0.06), 0 8px 24px rgba(20, 24, 18, 0.06);
+  --mv-focus: 0 0 0 3px rgba(31, 107, 79, 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mv-bg: #121411;
+    --mv-surface: #1a1d19;
+    --mv-surface-2: #232721;
+    --mv-border: #2f342c;
+    --mv-border-strong: #4a5145;
+    --mv-text: #eceee9;
+    --mv-text-muted: #a2a99c;
+
+    --mv-accent: #5fc39a;
+    --mv-accent-hover: #7bd2ad;
+    --mv-accent-contrast: #0c1f17;
+    --mv-accent-soft: #1b3329;
+
+    --mv-danger: #f28b82;
+    --mv-danger-soft: #3b1d1b;
+    --mv-warning: #f2c261;
+    --mv-warning-soft: #3a2e12;
+    --mv-success: #5fc39a;
+    --mv-success-soft: #1b3329;
+
+    --mv-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --mv-focus: 0 0 0 3px rgba(95, 195, 154, 0.4);
+  }
+}
